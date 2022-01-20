@@ -1,0 +1,3456 @@
+---
+title: 'Decoding temporal structure in narratives using functional connectivity pattern'
+author:
+  - name: "Taehoon Kim, Suhyun Lee, Seonhwa Park, Yeongeun Ban, Ghootae Kim"
+    affiliation: "Deep Memory Lab, Cognitive Science Research Group, Korea Brain Research Institute"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    highlight: tango
+    number_sections: true
+    theme: cosmo
+    toc: true
+    toc_depth: 5
+    toc_float:
+      collapse: false
+      smooth_scroll: false
+  pdf_document:
+    toc: true
+    toc_depth: 5
+subtitle: Narrative Structure in Animation & Functional Connectivity Pattern
+mainfont: Noto Sans CJK K
+editor_options: 
+  chunk_output_type: console
+---
+
+<br><br>
+
+***
+
+<br><Br>
+
+# Abstract
+
+<br>
+
+We perceive and memorize a set of continuous events as a narrative with plot structure, such as exposition, complication, climax, and resolution. Although many previous studies investigated how the brain constructs a unitary representation of a visual object consisting of many different parts, few studies examined how a temporal structure of narratives is represented in the brain. Here we investigated if the narrative structure can be decoded based on functional connectivity information acquired while participants are watching short film animations. These films were divided into an early (exposition and complication) and a later part (climax and resolution) by independent raters, and fMRI data during film watching were split into the two parts accordingly. Each of the splits was transformed into a functional connectivity matrix, and we tested whether the temporal structure (i.e., early, or later part) can be decoded based on the connectivity information using representational similarity and multivariate classification analyses. We could successfully decode the temporal structure of the narratives in both analyses: That is, irrespective of the contents, early and later parts of narratives had differential connectivity patterns from each other. Interestingly, the temporal structure decoding was also successful even when the same analyses were performed “across participants”. In a subsequent analysis, we found that the narrative structure information was predominantly represented in the visual, fronto-parietal, default mode networks. Our findings show that network-level interactions in the brain support representation of narrative structure independent from contents of narratives and individual difference in functional connectivity. 
+
+<br><br>
+
+***
+
+<br><br>
+
+# Preparation
+
+<br>
+
+```{r, echo=FALSE}
+rm(list=ls())
+# getwd()
+setwd("/Users/taehoonkim/Desktop/Workspace/git_project/aniFCnet_Py_R/")
+options(scipen=4)
+```
+
+```{css, echo=FALSE}
+pre code, pre, code {
+  white-space: pre !important;
+  overflow-x: scroll !important;
+  word-break: keep-all !important;
+  word-wrap: initial !important;
+}
+```
+
+
+```{r setup, message=FALSE}
+set.seed(12345) # for reproducibility
+options(knitr.kable.NA = '')
+
+# install // load packages 
+# Some packages need to be loaded. 
+# We use `pacman` as a package manager, which takes care of the other packages. 
+if (!require("distill", quietly = TRUE)) install.packages("distill")
+if (!require("devtools", quietly = TRUE)) install.packages("devtools")
+if (!require("papaja", quietly = TRUE)) devtools::install_github("crsh/papaja")
+if (!require("patchwork", quietly = TRUE)) devtools::install_github("thomasp85/patchwork")
+if (!require("klippy", quietly = TRUE)) devtools::install_github("RLesur/klippy")
+if (!require("pacman", quietly = TRUE)) install.packages("pacman")
+if (!require("Rmisc", quietly = TRUE)) install.packages("Rmisc")
+if (!require("rstatix", quietly = TRUE)) install.packages("rstatix")
+if (!require("effsize", quietly = TRUE)) install.packages("effsize")
+if (!require("lsr", quietly = TRUE)) install.packages("lsr")
+if (!require("effectsize", quietly = TRUE)) install.packages("effectsize")
+if (!require("ggbeeswarm", quietly = TRUE)) install.packages("ggbeeswarm") # Never load it directly.
+pacman::p_load(tidyverse, papaja, knitr, dplyr, car, psych, afex, lme4, lmerTest, 
+               emmeans, ggplot2, ggpubr, lattice, latticeExtra, parallel, 
+               effects, psycho, caret, sjPlot, ppcor, rstatix)
+library("patchwork"); library("klippy")
+klippy::klippy()
+
+
+targ_sn = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15 ,16, 17, 18, 19, 20, 21)
+# 12 제외
+```
+
+<br>
+
+***
+
+<br>
+
+# Stimiulus Check
+
+<br>
+
+참가자들은 스캐너 안에서 총 30개의 짧은 이야기 영상을 보았다. 이야기의 시간 흐름을 추적하기 위해, 각 이야기는 별도의 평정자들에 의해 발단과 전개를 포함하는 전반부와
+전환과 결말을 포함하는 후반부로 분할되었다. 분할된 영상의 구획별 지속 시간이 서로 큰 차이를 가지는 경우 기능적 연결성이 잘못 추정될 가능성이 있다. 이러한 가능성을 확인하기 위해 구획의 전반부, 후반부 간 지속 시간 차이를 분석하였다.
+
+<br>
+
+fMRI TR(2000ms) 별로 분석한 요약치는 아래와 같다.
+
+<br>
+
+```{r, collapse=TRUE}
+s1 <- read.csv("data/stim_info_cal_2pt.csv", header = T)
+s1$idx = factor(s1$idx)
+
+## 3 part
+s2 <- s1 %>% dplyr::select(idx, durTR, dur_p1_tr, dur_p2_tr)
+s2 <- gather(s2, key = part, value = tr, dur_p1_tr:dur_p2_tr, factor_key=T)
+s2$part <- factor(s2$part, levels=c("dur_p1_tr", "dur_p2_tr"),
+                  labels = c("p1", "p2"))
+glimpse(s2, width = 70)
+
+s2.w <- s2 %>% spread(key = part, value = tr)
+
+s2.G <- s2 %>% group_by(part) %>% rstatix::get_summary_stats(tr)
+s2.G %>% kable(digits = 2)
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+
+library(RColorBrewer)
+s.plot <- ggplot(data=s2, aes(x=part, y=tr, fill=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge",
+               na.rm = TRUE, alpha = .9, width = 0.8,  
+               color="black", size = 0.15) +
+  geom_point(data=s2, aes(x=part, y=tr, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_segment(data=s2.w, inherit.aes = FALSE,
+               aes(x=1, y=filter(s2.w)$p1,
+                   xend=2, yend=filter(s2.w)$p2),
+               color="gray90", alpha = .7) +
+  geom_errorbar(data=s2.G, 
+                aes(x = part, y=mean, ymin = mean - ci, ymax = mean + ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  coord_cartesian(ylim = c(0, 100), clip = "on") +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +
+  # scale_fill_brewer(palette="Set2", labels = c("Part 1", "Part 2")) + 
+  labs(x = "Part", y = "Duration (TR)") +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        # axis.text = element_text(face = "plain", size = 15, color = "black"),
+        # axis.text.x = element_text(face = "plain", size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+s.plot
+
+```
+
+<br>
+
+전반부와 후반부 간 지속 시간 차이는 통계적으로 유의하지 않았다. 따라서 아래의 분석 결과에 지속 시간의 차이가 체계적인 영향을 주었을 가능성은 적다.
+
+<br>
+
+```{r, collapse=TRUE, warning=F, message=FALSE, echo=T}
+s2.aov <- s2 %>% anova_test(tr ~ part + Error(idx/part), detailed = F)
+get_anova_table(s2.aov, correction = "GG") %>% kable(digits=2)
+
+p_h1 <- s2 %>% rstatix::pairwise_t_test(tr ~ part, 
+                                p.adjust.method="holm", 
+                                paired=T, detailed=T) %>% 
+  dplyr::select(group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- s2 %>% 
+  rstatix::cohens_d(tr ~ part, paired=T, ci = F) %>%
+  dplyr::select(group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("group1", "group2")) %>% kable(digits=3)
+```
+
+
+<br>
+
+***
+
+<br>
+
+# Behavior Results
+
+<br>
+
+기능적 연결성 분석에 앞서 참가자들이 영상을 성실히 보았는지, 제대로 이해하며 보았는지 정도를 확인할 필요가 있다. 스캔 세션이 끝난 후, 참가자들이 영상을 제대로 이해하며 보았는지 여부를 별도의 행동 검사를 통해 확인하였다. 영상 별로 이야기 흐름에 따라 구분되는 3개의 스틸컷을 준비하였고, 참가자들은 각 스틸컷을 시간 순서에 따라 재배열하였다. 이에 더하여, 해당 영상이 이해가 잘되었는지의 정도를 평정하였다. 마지막으로 영상을 보는 도중 집중하지 않았거나 존 경우, 별도로 체크하였다 (check = 1(성실히 보지않은 경우) or 0(성실히 본 경우)).
+
+<br>
+
+```{r, collapse=TRUE}
+bh <- read.csv("data/aniFCnet_behav.csv", header = T)
+glimpse(bh, width = 80)
+
+bh_l <- bh %>% filter(sn %in% targ_sn)
+bh_l$sn = factor(bh_l$sn)
+bh_l$stimIdx = factor(bh_l$stimIdx)
+bh_l$corr = bh_l$correctness
+
+bh_t <- bh_l %>% dplyr::select(sn, stimIdx, corr, scores, check)
+```
+
+<br>
+
+영상을 제대로 보지 않은 것으로 체크된 경우를 요약하였다.
+
+<br>
+
+```{r, collapse=TRUE}
+bh_1 <- bh_l %>% filter(check == 0)
+
+# mean number of trials for each conditions
+bh_1 %>% group_by(sn) %>%
+  dplyr::summarise(NumTrial = length(corr)) %>%
+  ungroup() %>%
+  dplyr::summarise(Mean = mean(NumTrial),
+                   Median = median(NumTrial),
+                   Min = min(NumTrial),
+                   Max = max(NumTrial), 
+                   OutN = sum(NumTrial),
+                   TotalN = (30*length(sn)),
+                   OutProp = 100 - sum(NumTrial)/(30*length(sn))*100 ) %>%
+  ungroup %>%
+  kable(digits=2)
+
+bh_1 %>% group_by(sn) %>%
+  dplyr::summarise(NumTrial = length(corr)) %>%
+  ungroup() %>% spread(key = sn, value = NumTrial) %>% 
+  kable(digits=2)
+
+```
+
+<br>
+
+## By Subject, Accuracy
+
+<br>
+
+영상을 보았지만 이야기를 잘 이해하지 못한 경우, 즉, 스틸컷 순서 맞추기 검사에서 틀린 경우를 요약하였다. 여기서 영상을 성실히 보지 않은 경우(check = 0)는 틀린 것으로 처리하였다. 그 결과, 최소 75% 이상의 정확도를 보였다.
+
+<br>
+
+```{r, collapse=TRUE}
+bh_2 <- bh_l %>% filter(corr == 1)
+
+
+# mean number of trials for each conditions
+bh_2 %>% group_by(sn) %>%
+  dplyr::summarise(NumTrial = length(corr)) %>%
+  ungroup() %>%
+  dplyr::summarise(Mean = mean(NumTrial),
+                   Median = median(NumTrial),
+                   Min = min(NumTrial),
+                   Max = max(NumTrial), 
+                   OutN = sum(NumTrial),
+                   TotalN = (30*length(sn)),
+                   OutProp = 100 - sum(NumTrial)/(30*length(sn))*100 ) %>%
+  ungroup %>%
+  kable(digits=2)
+
+bh_2 %>% group_by(sn) %>%
+  dplyr::summarise(NumTrial = length(corr)) %>%
+  ungroup() %>% spread(key = sn, value = NumTrial) %>% 
+  kable(digits=2)
+
+```
+
+<br>
+
+```{r, collapse=TRUE}
+
+bh_3 <- bh_l
+# glimpse(bh_1)
+# subject-level, long format
+bh_allL <- bh_3 %>% group_by(sn) %>%
+  dplyr::summarise(acc=mean(corr)*100) %>%
+  ungroup()
+# bh_allL %>% kable(digits=2)
+
+bh_allL.1 <- bh_allL %>% 
+  nest() %>%
+  mutate(lbound = map(data, ~mean(.$acc)-2*sd(.$acc)),
+         ubound = map(data, ~mean(.$acc)+2*sd(.$acc))) %>% # make new data (3sd cut)
+  unnest(c(lbound, ubound))%>% 
+  unnest(data) %>% 
+  mutate(Outlier = (acc < lbound)|(acc > ubound))
+  #filter(Outlier == FALSE) %>% # filtering outlier
+  
+
+# subject-level, wide format
+bh_allG <- rstatix::get_summary_stats(bh_allL) %>%
+  mutate(acc.m = mean, acc.sd = sd, acc.se = se, acc.ci = ci) %>%
+  dplyr::select(acc.m, acc.sd, acc.se, acc.ci)
+bh_allG <- bh_allG %>% 
+  mutate(lower.ci = acc.m-acc.ci,
+         upper.ci = acc.m+acc.ci,
+         lower.se = acc.m-acc.se,
+         upper.se = acc.m+acc.se)
+
+bh_allL %>% spread(key = sn, value = acc) %>% kable(digits=1)
+bh_allG %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+bh_allG$x <- 1
+bh_allG$x <- factor(bh_allG$x)
+bh.plot1 <- ggplot(data=bh_allG, aes(x=x, y=acc.m)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", fill="gray70",
+               na.rm = TRUE, alpha = .9, width = 0.7,  color="black", size = 0.15) +
+  geom_errorbar(data=bh_allG, 
+                aes(x = 1, y=acc.m, ymin = acc.m - acc.ci, ymax = acc.m + acc.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  geom_hline(yintercept=70, linetype='dashed', color='darkred', alpha =1, size=1) +
+  coord_cartesian(ylim = c(0, 100), clip = "on") +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  labs(x = "Group", y = "Mean Accuracy (%)") +
+  # scale_x_discrete(labels=c("Summary")) +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+# bh.plot1
+
+bh.plot2 <- ggplot(data=bh_allL, aes(x=sn, y=acc)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", fill="gray70",
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=60, linetype='dashed', color='darkred', alpha =1, size=1) +
+  coord_cartesian(ylim = c(0, 100), clip = "on") +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  labs(x = "Subject Number", y = "Accuracy (%)") +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", size = 15, color = "black"),
+        axis.text.x = element_text(face = "plain", size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+# bh.plot2
+
+bh.plot <- ggarrange(bh.plot1, bh.plot2, ncol = 2, widths = c(1,3), 
+                     labels = c("A", "B"))
+bh.plot
+
+```
+
+<br>
+
+## By Subject, Comprehension Score
+
+<br>
+
+각 참가자들이 영상이 이해가 잘되었는지의 정도를 평정한 결과를 요약하였다. 여기서 점수가 높을수록 이해가 잘되었음을 나타낸다. 
+
+<br>
+
+```{r, collapse=TRUE}
+# subject-level, long format
+bh_allL <- bh_1 %>% group_by(sn) %>%
+  dplyr::summarise(score=mean(scores)) %>%
+  ungroup()
+# bh_allL %>% kable(digits=2)
+
+# subject-level, wide format
+bh_allG <- rstatix::get_summary_stats(bh_allL) %>%
+  mutate(score.m = mean, score.sd = sd, score.se = se, score.ci = ci) %>%
+  dplyr::select(score.m, score.sd, score.se, score.ci)
+bh_allG <- bh_allG %>% 
+  mutate(lower.ci = score.m-score.ci,
+         upper.ci = score.m+score.ci,
+         lower.se = score.m-score.se,
+         upper.se = score.m+score.se)
+
+bh_allL %>% spread(key = sn, value = score) %>% kable(digits=2)
+bh_allG %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+bh_allG$x <- 1
+bh_allG$x <- factor(bh_allG$x)
+bh.plot1 <- ggplot(data=bh_allG, aes(x=x, y=score.m)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", fill="gray70",
+               na.rm = TRUE, alpha = .9, width = 0.7,  color="black", size = 0.15) +
+  geom_errorbar(data=bh_allG, 
+                aes(x = 1, y=score.m, ymin = score.m - score.ci, ymax = score.m + score.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  geom_hline(yintercept=60, linetype='dashed', color='darkred', alpha =1, size=1) +
+  coord_cartesian(ylim = c(1, 9), clip = "on") +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  labs(x = "Group", y = "Mean Score") +
+  scale_y_continuous(breaks = seq(0, 9, by = 1)) +
+  # scale_x_discrete(labels=c("Summary")) +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+# bh.plot1
+
+bh.plot2 <- ggplot(data=bh_allL, aes(x=sn, y=score)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", fill="gray70",
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=60, linetype='dashed', color='darkred', alpha =1, size=1) +
+  coord_cartesian(ylim = c(1, 9), clip = "on") +
+  scale_y_continuous(breaks = seq(1, 9, by = 1)) +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  labs(x = "Subject Number", y = "Score") +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", size = 15, color = "black"),
+        axis.text.x = element_text(face = "plain", size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+# bh.plot2
+
+bh.plot <- ggarrange(bh.plot1, bh.plot2, ncol = 2, widths = c(1,3), 
+                     labels = c("A", "B"))
+bh.plot
+
+```
+
+<br>
+
+***
+
+<br>
+
+# Image Quality Assessment
+
+<br>
+
+기능적 연결성 분석의 대상이 되는 fMRI time-course data는 스캔 중 참가자들의 움직임에 민감하다. 만약 스캔 중 과도한 움직임이 있는 경우, time-course data를 왜곡할 수 있고 기능적 연결성이 잘못 추정될 수 있다. 이를 위해 fMRI 전처리 과정에 움직임을 보정하는 단계(motion correction, denoising step)를 거치나, 움직임이 많은 경우, 보정 과정에서 과도하게 많은 데이터를 제거할 가능성이 있다. 이러한 가능성을 확인하기 위해, 각 영상의 TR 별로 Framewise Displacement를 계산하고, 사전에 정해진 역치를 초과하는지, 전/후반부 간 과도한 차이가 있는지 확인하였다.
+
+<br>
+
+```{r, collapse=TRUE}
+# qa1 <- read.csv("fd_byRun_opt3.csv", header = T)
+qa1 <- read.csv("data/fd_byIdx_opt3.csv", header = T)
+
+glimpse(qa1, width = 80)
+
+qa1_l <- qa1 %>% filter(sn %in% targ_sn)
+qa1_l$sn = factor(qa1_l$sn)
+qa1_l$run = factor(qa1_l$run)
+qa1_l$idx = factor(qa1_l$idx)
+# qa1_l <- gather(qa1_l, key = part, value = fd, all_fd:p2_fd)
+qa1_l <- gather(qa1_l, key = part, value = fd, stim_fd:p2_fd)
+# qa1_l$part <- factor(qa1_l$part, 
+#                      levels = c('all_fd', 'stim_fd', 'p1_fd', 'p2_fd'),
+#                      labels = c('all', 'stim', 'p1', 'p2'))
+qa1_l$part <- factor(qa1_l$part, 
+                     levels = c('stim_fd', 'p1_fd', 'p2_fd'),
+                     labels = c('stim', 'p1', 'p2'))
+
+
+qa1_t <- qa1_l %>% dplyr::select(sn, run, idx, part, fd, count, prop)
+
+bh_tt <- bh_t
+bh_tt$idx <- bh_tt$stimIdx
+bh_tt <- bh_tt %>% dplyr::select(sn, idx, corr, check)
+
+qa1_t <- merge(qa1_t, bh_tt, by= c('sn', 'idx'))
+qa1_t <- qa1_t %>% filter(check == 0) %>% filter(corr == 1)
+```
+
+<br>
+
+## By Subject, Framewise Displacement
+
+<br>
+
+각 영상별 지속 시간에서 Framewise Displacement가 0.2mm를 초과하는 경우가 있는지를 참가자별로 요약하였다. 분석 결과, 평균 FD가 0.2mm 를 초과하는 참가자는 관찰되지 않았다.
+
+<br>
+
+```{r, collapse=TRUE}
+
+# glimpse(qa1_1)
+# subject-level, long format
+# qa1_allL <- qa1_t %>% dplyr::filter(run == 0, part == 'stim') %>% group_by(sn) %>%
+#   dplyr::summarise(fd=mean(fd)) %>%
+#   ungroup()
+qa1_allL <- qa1_t %>% dplyr::filter(part == 'stim') %>% group_by(sn) %>%
+  dplyr::summarise(fd=mean(fd)) %>%
+  ungroup()
+
+# qa1_allL %>% kable(digits=2)
+
+# subject-level, wide format
+qa1_allG <- rstatix::get_summary_stats(qa1_allL) %>%
+  mutate(fd.m = mean, fd.sd = sd, fd.se = se, fd.ci = ci) %>%
+  dplyr::select(fd.m, fd.sd, fd.se, fd.ci)
+qa1_allG <- qa1_allG %>% 
+  mutate(lower.ci = fd.m-fd.ci,
+         upper.ci = fd.m+fd.ci,
+         lower.se = fd.m-fd.se,
+         upper.se = fd.m+fd.se)
+
+qa1_allL %>% spread(key = sn, value = fd) %>% kable(digits=2)
+qa1_allG %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+qa1_allG$x <- 1
+qa1_allG$x <- factor(qa1_allG$x)
+qa1.plot1 <- ggplot(data=qa1_allG, aes(x=x, y=fd.m)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", fill="gray70",
+               na.rm = TRUE, alpha = .9, width = 0.7,  color="black", size = 0.15) +
+  geom_errorbar(data=qa1_allG, 
+                aes(x = 1, y=fd.m, ymin = fd.m - fd.ci, ymax = fd.m + fd.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  geom_hline(yintercept=0.2, linetype='dashed', color='darkred', alpha =1, size=1) +
+  coord_cartesian(ylim = c(0, 0.3), clip = "on") +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  labs(x = "Group", y = "Mean FD value") +
+  # scale_x_discrete(labels=c("Summary")) +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+# qa1.plot1
+
+qa1.plot2 <- ggplot(data=qa1_allL, aes(x=sn, y=fd)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", fill="gray70",
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=0.2, linetype='dashed', color='darkred', alpha =1, size=1) +
+  coord_cartesian(ylim = c(0, 0.3), clip = "on") +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  labs(x = "Subject Number", y = "FD value") +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", size = 15, color = "black"),
+        axis.text.x = element_text(face = "plain", size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+# qa1.plot2
+
+qa1.plot <- ggarrange(qa1.plot1, qa1.plot2, ncol = 2, widths = c(1,3), 
+                      labels = c("A", "B"))
+qa1.plot
+
+```
+
+<br>
+
+## By Subject, Proportion of Outlier TRs (FD 0.2<) 
+
+<br>
+
+평균 FD 분석에 더하여, 영상의 TR별로 FD가 0.2mm 를 초과하는 경우가 개별 영상의 전체 지속 시간에서 어느 정도 비율을 차지하는지 참가자별로 요약하였다. FD가 0.2mm를 초과하는 TR의 비율이 50% 를 초과하는 참가자는 관찰되지 않았다.
+
+<br>
+
+```{r, collapse=TRUE}
+
+# glimpse(qa1_1)
+# subject-level, long format
+# qa1_allL <- qa1_t %>% dplyr::filter(run == 0, part == 'all') %>% group_by(sn) %>%
+#   dplyr::summarise(prop=mean(prop)) %>%
+#   ungroup()
+qa1_allL <- qa1_t %>% dplyr::filter(part == 'stim') %>% group_by(sn) %>%
+  dplyr::summarise(prop=mean(prop)) %>%
+  ungroup()
+
+# qa1_allL %>% kable(digits=2)
+
+# subject-level, wide format
+qa1_allG <- rstatix::get_summary_stats(qa1_allL) %>%
+  mutate(prop.m = mean, prop.sd = sd, prop.se = se, prop.ci = ci) %>%
+  dplyr::select(prop.m, prop.sd, prop.se, prop.ci)
+qa1_allG <- qa1_allG %>% 
+  mutate(lower.ci = prop.m-prop.ci,
+         upper.ci = prop.m+prop.ci,
+         lower.se = prop.m-prop.se,
+         upper.se = prop.m+prop.se)
+
+qa1_allL %>% spread(key = sn, value = prop) %>% kable(digits=2)
+qa1_allG %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+qa1_allG$x <- 1
+qa1_allG$x <- factor(qa1_allG$x)
+qa1.plot1 <- ggplot(data=qa1_allG, aes(x=x, y=prop.m)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", fill="gray70",
+               na.rm = TRUE, alpha = .9, width = 0.7,  color="black", size = 0.15) +
+  geom_errorbar(data=qa1_allG, 
+                aes(x = 1, y=prop.m, ymin = prop.m - prop.ci, ymax = prop.m + prop.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  geom_hline(yintercept=50, linetype='dashed', color='darkred', alpha =1, size=1) +
+  # coord_cartesian(ylim = c(0, 0.3), clip = "on") +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  labs(x = "Group", y = "Mean Proportion of Outliers (%)") +
+  # scale_x_discrete(labels=c("Summary")) +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+# qa1.plot1
+
+qa1.plot2 <- ggplot(data=qa1_allL, aes(x=sn, y=prop)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", fill="gray70",
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=50, linetype='dashed', color='darkred', alpha =1, size=1) +
+  # coord_cartesian(ylim = c(0, 0.3), clip = "on") +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  labs(x = "Subject Number", y = "Proportion of Outliers (%)") +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", size = 15, color = "black"),
+        axis.text.x = element_text(face = "plain", size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position=c(0.8, 0.85))
+# qa1.plot2
+
+qa1.plot <- ggarrange(qa1.plot1, qa1.plot2, ncol = 2, widths = c(1,3), 
+                      labels = c("A", "B"))
+qa1.plot
+
+
+```
+
+<br>
+
+## By Part & Subject, Framewise Displacement
+
+<br>
+
+각 참가자별로, 영상의 전/후반부 간 FD 값의 체계적인 차이가 있는지 확인하였다. 
+
+<br>
+
+```{r, collapse=TRUE}
+# subject-level, long format
+qa2_t <- qa1_t %>% dplyr::filter(run != 0, part != 'all', part != 'stim')
+qa2_t$part <- factor(qa2_t$part)
+qa2_allL <- qa2_t %>% group_by(sn, part) %>%
+  dplyr::summarise(fd=mean(fd)) %>%
+  ungroup()
+
+# summary table: grand mean
+qa2_allG <- qa2_allL %>% group_by(part) %>%
+  dplyr::summarise(fd.m = mean(fd), fd.sd = sd(fd)) %>%
+  ungroup()
+qa2_allG$fd.se <- Rmisc::summarySEwithin(data = qa2_allL, measurevar = "fd", 
+                                         idvar = "sn", withinvars = c("part"))$se
+qa2_allG$fd.ci <- Rmisc::summarySEwithin(data = qa2_allL, measurevar = "fd", 
+                                         idvar = "sn", withinvars = c("part"))$ci
+qa2_allG <- qa2_allG %>% 
+  mutate(lower.ci = fd.m-fd.ci,
+         upper.ci = fd.m+fd.ci,
+         lower.se = fd.m-fd.se,
+         upper.se = fd.m+fd.se)
+
+qa2_allG %>% kable(digits=3)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+qa2.plot2 <- ggplot(data=qa2_allL, aes(x=sn, y=fd, fill=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=0.2, linetype='dashed', color='darkred', alpha =1, size=1) +
+  # coord_cartesian(ylim = c(0, 0.3), clip = "on") +
+  # coord_cartesian(ylim = c(0, 5), clip = "on") +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +
+#  scale_fill_brewer(palette="Set2", labels = c('part 1', 'part 2')) + 
+  labs(x = "Subject Number", y = "FD value") +
+  theme_bw(base_size = 18) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", size = 15, color = "black"),
+        axis.text.x = element_text(face = "plain", size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position='top')
+qa2.plot2
+
+```
+
+## By Part, Framewise Displacement
+
+<br>
+
+영상의 전/후반부에서 FD value의 차이를 요약하였다.
+
+<br>
+
+```{r, collapse=TRUE}
+# subject-level, long format
+qa2_t <- qa1_t %>% dplyr::filter(run != 0, part != 'all', part != 'stim')
+qa2_t$part <- factor(qa2_t$part)
+qa2_allL <- qa2_t %>% group_by(sn, part) %>%
+  dplyr::summarise(fd=mean(fd)) %>%
+  ungroup()
+
+# subject-level, wide format
+qa2_allW <- qa2_allL %>% spread(key=part, value = fd)
+# qa2_allW %>% kable(digits=2)
+
+# summary table: grand mean
+qa2_allG <- qa2_allL %>% group_by(part) %>%
+  dplyr::summarise(fd.m = mean(fd), fd.sd = sd(fd)) %>%
+  ungroup()
+qa2_allG$fd.se <- Rmisc::summarySEwithin(data = qa2_allL, measurevar = "fd", 
+                                         idvar = "sn", withinvars = c("part"))$se
+qa2_allG$fd.ci <- Rmisc::summarySEwithin(data = qa2_allL, measurevar = "fd", 
+                                         idvar = "sn", withinvars = c("part"))$ci
+qa2_allG <- qa2_allG %>% 
+  mutate(lower.ci = fd.m-fd.ci,
+         upper.ci = fd.m+fd.ci,
+         lower.se = fd.m-fd.se,
+         upper.se = fd.m+fd.se)
+
+qa2_allG %>% kable(digits=3)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+library(RColorBrewer)
+# display.brewer.all()
+
+qa2_allL.1 <- qa2_allL
+qa2_allW.1 <- qa2_allW
+qa2_allG.1 <- qa2_allG
+
+qa2.p1.all.plot1 <- ggplot(data=qa2_allL.1, aes(x=part, y=fd, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  size = 0.15, color = "black" ) +
+  geom_hline(yintercept=0.2, linetype='dashed', color="gray20", alpha =1, size=1) +
+  geom_segment(data=filter(qa2_allW.1), inherit.aes = FALSE,
+               aes(x=1, y=filter(qa2_allW.1)$p1,
+                   xend=2, yend=filter(qa2_allW.1)$p2),
+               color="gray90") +
+  geom_point(data=qa2_allL.1, aes(x=part, y=fd, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  
+  geom_errorbar(data=qa2_allG.1, aes(x=part, y= fd.m, ymin=fd.m-fd.ci, ymax=fd.m+fd.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +
+  
+#  scale_fill_brewer(palette="Set2",labels = c('part 1', 'part 2')) + 
+  # coord_cartesian(ylim = c(0, 100), clip = "on") +
+  labs(x = "Part", y = "mean FD value") +
+  ggtitle("By Part, Framewise Displacement") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+qa2.p1.all.plot1
+
+```
+
+<br>
+
+전/후반부 간 FD 값의 차이는 통계적으로 유의하지 않았다.
+
+<br>
+
+```{r, echo=T}
+qa2_allL.1.tmp <- qa2_allL 
+
+qa2.aov1.tmp <- aov_ez(id="sn", dv="fd", data = qa2_allL.1.tmp, within = c("part"))
+# summary(r1.aov1)
+nice(qa2.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- qa2_allL.1.tmp %>% 
+  rstatix::pairwise_t_test(fd ~ part,
+                           p.adjust.method="holm",
+                           paired=T, detailed=T) %>%
+  dplyr::select(group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif)
+p_h2 <- qa2_allL.1.tmp %>% 
+  rstatix::cohens_d(fd ~ part, paired=T, ci = F) %>%
+  dplyr::select(group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("group1", "group2")) %>% kable(digits=3)
+```
+
+
+```{r, collapse=FALSE, warning=FALSE, message=FALSE}
+bh_t <- bh_t %>% filter(sn %in% targ_sn)
+```
+
+<br>
+
+***
+
+<br>
+
+# fMRI Results
+
+<br>
+
+이야기 지각 중 획득된 fMRI 뇌 영상 자료는 상기한 자료를 기반으로 전, 후반으로 분할되었고, 각 구획의 자료는 기능적 연결성 패턴(functional connectivity pattern)으로 재구성되었다. 
+
+<br>
+
+먼저 전체 뇌의 기능적 연결성 패턴 분석을 위한 Whole-brain parcellation은 [Yeo et al.2011](https://pubmed.ncbi.nlm.nih.gov/21653723/); [Yeo et al., 2015](https://pubmed.ncbi.nlm.nih.gov/25700949/) 을 따라 이루어졌다. 먼저 7개 Brain Network(Vis, SM, FPN, DAN, VAN, DMN, Limbic Network)를 기반으로 한 114개의 cortical regions를 MNI space로 변환하였다[YeoLab, GitHub](https://github.com/ThomasYeoLab/CBIG/tree/master/stable_projects/brain_parcellation/Yeo2011_fcMRI_clustering). Sub-cortical Regions으로 FSL MNI152 template brain에서 Freesurfer segmentation으로 추출된 8개의 ROIs(bilateral amygdala, hippocampus, thalamus, striatum)을 준비하였다. 이 ROI들은 Subcortical Network로 할당하였다. 이러한 절차를 통해 최종적으로 122개 ROIs, 8개 Network (Vis, SM, FPN, DAN, VAN, DMN, Limbic Network, Subcor) + TemporalParietal이 준비되었다.
+
+<br>
+
+fMRI EPI 데이터는 FSL 6.0.4과 FMRIB software libraries (Analysis Group, FMRIB, Oxford, UK; http://fsl.fmrib.ox.ac.uk)로 전처리되었다. 구체적으로 EPI 데이터의 T1 equilibration을 위해 각 scan run에서 3개의 volume(6s)을 제거하고 Slice Timing Correction과 Motion Correction을 수행하였다. 또한 128-s period cut-off의 high-pass filter로 필터링되었다. Spatial smoothing은 5-mm full-width half-maximum (FWHM) kernel로 수행되었다. 이어서 전처리된 fMRI 데이터에서 noise를 제거하기 위해 Nuisance Regression을 수행하였다. Regression에는 6개의 motion-related parameter, 각 parameter의 quadratic term 6개, 그리고 Global Mean Siganl, White-matter Mask와 Ventricle Mask에서 각각 추출된 3개의 regressors, 그리고 전체 parameter들의 temporal derivatives를 포함하여 총 30개의 regressors가 포함되었다. Nuisance regression 후 종적으로 산출된 cleaned fMRI EPI 데이터는 High-resoultion structural scan -> MNI template, EPI -> High-resolution structural scan, EPI -> MNI temlate의 과정을 통해 Registration 되었다.
+
+<br>
+
+결과적으로 생성된 standard MNI brain 데이터에서 각 영상의 timepoint별로 timecourse data를 추출하였다. 추출된 영상 별 timecourse data는 사전에 설정된 전/후반부로 분할되었다. 구획별 fMRI 신호의 겹침을 방지하고, 정확한 timecourse data를 추출하기 위해, 영상의 시작 부분 3TR, 영상의 전/후반부 경계의 전후의 3TR (6TR)을 제거하고, 전/후반부의 timecourse data를 추출하였다. 추출된 timecourse data는 사전에 준비된 122개 ROI에 따라 추출 및 평균화 되었다. 이에 따라 총 122개의 Timecourse가 전/후반부 별로 총 30개 영상에 대해 준비되었다.
+
+<br>
+
+30개 영상, 전/후반부의 122개 timecourse에서 기능적 연결성 분석을 수행하였다. 각 영상의 구획별 122개 timecourse에서 서로 간 Pearson correlation을 계산하여 122 x 122의 Connectivity Matrix를 구성하고, Fisher의 z-transformation을 통해 각 r값을 z 값으로 변환하였다. 이어서 각 matrix에서 edge들을 추출하여 영상/구획별 connectivity pattern을 추출하고 edge들에 8개 networ k + TP와 Between Network의 인덱스를 부여하였다. 이러한 과정을 통해 전체 참가자별로, 30개의 영상에 대한 전/후반후 connectivity pattern 데이터가 준비되었다.
+
+<br>
+
+최종 connectivity pattern에 대하여 Multivariate Pattern Analysis를 수행하였다. 이 분석은 성실히 보지 않았거나, 제대로 이해하지 못한 것으로 판정된 영상들을 제외한 나머지 영상의 패턴들을 대상으로 수행되었다. 먼저 Python 분석(aniFC_sFC_analysis.ipynb 코드 참조)을 수행하였다. Python을 활용한 분석에는 numpy, pandas, sklearn, brain connectivity toolbox 등의 package가 사용되었다. 참가자 내에서 영상별 분류가 패턴 분류가 되는지, 참가자 간에 걸쳐 패턴 분류가 되는지 확인하기 위해 Machine learning 기법으로 패턴 분류를 수행하였다. 추가로, BCT 패키지를 통해Network Analysis를 수행하여 조건/패턴별 network measure를 추출하였다. 이어서 Matlab을 통해 Representational Similarity Analysis를 수행하였다. 각 참가자 내에서 영상 내/간의 패턴 유사성을 비교하고 전체 영상에서 전/후반부 별 패턴 유사성을 비교하였다. 아래에는 위 분석에 대한 통계 분석을 수행한다. 
+
+
+
+***
+
+<br>
+
+## MVPC - Classifier Check
+
+<br>
+
+먼저 Python 코드를 활용한 Multivariate Pattern Classification 결과를 확인한다. 첫째로 참가자 내에서 서로 다른 영상에 대하여 전/후반부에 따른 패턴 분류가 성공적으로 되는지 살펴보았다. 참가자 내 패턴 분류는 Run을 기준으로 Train & Test 셋을 구성하여 수행하였다. 구체적으로 10개 Run 중 9개 (27개 영상)를 Training Set, 1개 Run(3개 영상)을 Test Set으로 구분하고, Training & Test를 수행한다. 이 과정을 Cross-Validation Step 과 유사하게 Run 별로 10번 반복하여 10번의 정확도를 평균화하였다.분석 모델에 따른 차이를 확인하기 위해서 Ridge, Logistic Regression, SVM의 세 가지 classifier 모델을 활용하였다.
+
+<br>
+
+```{r, collapse=TRUE}
+r5 <- read.csv("py_output/sFC_mvpc_subj_opt3_std2.csv", header = T)
+
+glimpse(r5, width = 70)
+
+r5_l <- r5 %>% filter(subj %in% targ_sn)
+r5_l$sn = factor(r5_l$subj)
+r5_l$netNum = factor(r5_l$net, 
+                     levels = c(10, 0, 1, 2, 3, 4, 5, 6, 7, 9),
+                     labels = c('All', 'Btw', 'Vis', 'SM', 'FPN',
+                                'VAN', 'DAN', 'DMN', 'Limb', 'SubCor'))
+
+# % 0. All
+# % 1. Vis
+# % 2. SM
+# % 3. FPN
+# % 4. VAN
+# % 5. DAN
+# % 6. DMN
+# % 7. Limbic
+# % 8. TP
+# % 9. SubCor
+# % 10. BTW
+
+r5_l$classf = factor(r5_l$classifier, levels=c(1,2,3),
+                     labels = c('ridge', 'logreg', 'linearSVM'))
+r5_l$acc = r5_l$valid_acc
+
+
+r5_1 = r5_l %>% dplyr::select(sn, netNum, classf, acc, p1_acc, p2_acc,
+                              auc)
+
+table(r5_1$sn, r5_1$netNum)
+
+```
+
+<br>
+
+### Three Classifier & Network - Accuracy
+
+<br>
+
+세 Classifier가 참가자 내에서 영상 간의 패턴 분류를 수행한 결과를 전체 pattern과 네트워크 별 pattern으로 요약하였다. 
+
+<br>
+
+```{r, collapse=TRUE}
+# glimpse(r5_1)
+# subject-level, long format
+r5_allL <- r5_1 %>% group_by(sn, classf, netNum) %>%
+  dplyr::summarise(acc=mean(acc)) %>%
+  ungroup()
+# r5_allL %>% kable(digits=2)
+
+
+
+# subject-level, wide format
+r5_allW <- r5_allL %>% spread(key=netNum, value = acc)
+# r5_allL %>% filter(sn==2)%>% spread(key=netNum, value = acc)
+r5_allW %>% dplyr::select(sn, classf, All) %>% 
+  spread(key=sn, value= All)%>% kable(digits=2)
+# summary table: grand mean
+r5_allG <- r5_allL %>% group_by(classf, netNum) %>%
+  dplyr::summarise(acc.m = mean(acc), acc.sd = sd(acc)) %>%
+  ungroup()
+r5_allG$acc.se <- Rmisc::summarySEwithin(data = r5_allL, measurevar = "acc", 
+                                         idvar = "sn", withinvars = c("classf","netNum"))$se
+r5_allG$acc.ci <- Rmisc::summarySEwithin(data = r5_allL, measurevar = "acc", 
+                                         idvar = "sn", withinvars = c("classf","netNum"))$ci
+r5_allG <- r5_allG %>% 
+  mutate(lower.ci = acc.m-acc.ci,
+         upper.ci = acc.m+acc.ci,
+         lower.se = acc.m-acc.se,
+         upper.se = acc.m+acc.se)
+
+r5_allG %>% dplyr::select(netNum, classf, acc.m) %>%
+  spread(key=netNum, value=acc.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+library(RColorBrewer)
+# display.brewer.all()
+
+
+r5_allL.1 <- r5_allL #%>% filter(netNum == 'All')
+r5_allG.1 <- r5_allG #%>% filter(netNum == 'All')
+# r5_allG.1 <- r5_allW %>% filter(netNum == 'All')
+r5.p1.all.plot1 <- ggplot(data=r5_allL.1, aes(x=netNum, y=acc, fill=netNum, shpae=netNum)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  size = 0.15, color = "black") +
+  geom_hline(yintercept=50, linetype='dashed', color="gray20", alpha =1, size=1) +
+  facet_grid(.~classf, scales="free_x", space = "free",
+             labeller = labeller(classf = c("ridge" = "ridge",
+                                            "logreg" = "logreg",
+                                            "linearSVM" = "linear\nSVM",
+                                            "rbfSVM" = "rbf\nSVM"))) +
+  # geom_dotplot(binaxis = "y", stackdir = "center", stackratio = 0.5,
+  #              color = "black", alpha = 0.5, #position = "nudge",
+  #              position = position_jitter(0.15),
+  #              inherit.aes = TRUE, binwidth = 0.4) +
+  # geom_jitter(aes(x=cond, y=z, fill=cond,color = cond), 
+  #             position=position_jitter(0.1), cex=2
+  #             ) + 
+  geom_point(data=r5_allL.1, aes(x=netNum, y=acc, fill=netNum), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r5_allG.1, aes(x=netNum, y= acc.m, ymin=acc.m-acc.ci, ymax=acc.m+acc.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_fill_brewer(palette="Set3") + 
+  coord_cartesian(ylim = c(0, 100), clip = "on") +
+  labs(x = "Network", y = "Classification Accuracy") +
+  ggtitle("FC - Yeo122net MVPC") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r5.p1.all.plot1
+```
+
+<br>
+
+세 가지 Classifier, Network 별로 정확도가 Chance level인 50%보다 유의하게 높은지 살펴보았다.
+
+<br>
+
+```{r, collapse=TRUE, warning=F, message=FALSE, echo=T}
+
+r5_allL.1.tmp <- r5_allL 
+r5_allL.1.tmp$classf #<- factor(r5_allL.1.tmp$classf, 
+                               #levels = c("ridge", "logreg", "linearSVM"))
+r5_allL.1.tmp$netNum #<- factor(r5_allL.1.tmp$netNum, 
+                               #levels = c("All", "Vis", "SM", "Control", "salvAtt", "DAN", "DMN", "Limb", "SubCor"))
+p_h1 <- r5_allL.1.tmp %>% group_by(classf, netNum) %>% 
+  rstatix::t_test(acc ~ 1, mu = 50,
+                  detailed=T) %>%
+  dplyr::select(classf, netNum, group1, group2, estimate, conf.low, conf.high, df, statistic, p)
+p_h2 <- r5_allL.1.tmp %>% group_by(classf, netNum) %>% 
+  rstatix::cohens_d(acc ~ 1, mu = 50, ci = F) %>%
+  dplyr::select(classf, netNum, group1, group2, effsize, magnitude)
+Res <-  merge(p_h1, p_h2, by=c("classf", "netNum", "group1", "group2")) 
+as_tibble(Res[c(order(Res$classf, Res$netNum) ),]) %>% 
+  dplyr::select(classf, netNum, group2, estimate, conf.low, conf.high, df, statistic, p ,effsize, magnitude) %>% kable(digits =3)
+
+```
+
+<br>
+
+세 가지 Classifier에 따른 전반적인 정확도 차이가 있는지 살펴보았다.
+
+<br>
+
+
+```{r, collapse=TRUE, warning=F, message=FALSE, echo=T}
+
+r5_allL.1.tmp <- r5_allL %>% filter(netNum == "All")
+r5.aov1.tmp <- aov_ez(id="sn", dv="acc", data = r5_allL.1.tmp, within = c("classf"))
+# summary(r1.aov1)
+nice(r5.aov1.tmp, es="pes") %>% kable(digits=2)
+
+r5_allL.1.tmp <- r5_allL %>% filter(classf == "ridge")
+r5.aov1.tmp <- aov_ez(id="sn", dv="acc", data = r5_allL.1.tmp, within = c("netNum"))
+# summary(r1.aov1)
+nice(r5.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r5_allL.1.tmp %>% group_by(classf) %>%
+  rstatix::pairwise_t_test(acc ~ netNum,
+                           p.adjust.method="holm",
+                           paired=T, detailed=T) %>%
+  dplyr::select(classf, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif)
+p_h2 <- r5_allL.1.tmp %>% group_by(classf) %>%
+  rstatix::cohens_d(acc ~ netNum, paired=T, ci = F) %>%
+  dplyr::select(classf, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("classf","group1", "group2")) %>% kable(digits = 3)
+```
+
+<br>
+
+결과적으로 세 가지 Classifier 간의 강한 차이는 관찰되지 않았다. 따라서 아래에서는 Ridge Classifier를 사용하여 분석한 결과를 확인한다. 
+
+<br>
+
+### Ridge & Network & Part - Accuracy
+
+<br>
+
+ridge classifier, 네트워크 별로 파트 간 정확도 차이가 있는지 살펴본다.
+
+<br>
+
+```{r, collapse=TRUE}
+
+# subject-level, long format
+r5_11 <- r5_1 %>% dplyr::filter(classf == "ridge") %>% #"ridge") %>% rbfSVM
+  dplyr::select(sn, netNum, classf, p1_acc, p2_acc)
+r5_11 <- gather(r5_11, key = part, value = acc, p1_acc:p2_acc)
+r5_11$part <- factor(r5_11$part,
+                     levels = c('p1_acc', 'p2_acc'),
+                     labels = c('p1', 'p2'))
+
+r5_allL <- r5_11 %>% group_by(sn, classf, netNum, part) %>%
+  dplyr::summarise(acc=mean(acc)) %>%
+  ungroup()
+# r5_allL %>% kable(digits=2)
+
+# subject-level, wide format
+r5_allW <- r5_allL %>% spread(key=netNum, value = acc)
+# r5_allL %>% filter(sn==2)%>% spread(key=netNum, value = acc)
+r5_allW %>% dplyr::select(sn, classf, part, All) %>% 
+  spread(key=part, value= All)%>% kable(digits=2)
+# summary table: grand mean
+r5_allG <- r5_allL %>% group_by(classf, netNum, part) %>%
+  dplyr::summarise(acc.m = mean(acc), acc.sd = sd(acc)) %>%
+  ungroup()
+r5_allG$acc.se <- Rmisc::summarySEwithin(data = r5_allL, measurevar = "acc", 
+                                         idvar = "sn", withinvars = c("classf","netNum","part"))$se
+r5_allG$acc.ci <- Rmisc::summarySEwithin(data = r5_allL, measurevar = "acc", 
+                                         idvar = "sn", withinvars = c("classf","netNum","part"))$ci
+r5_allG <- r5_allG %>% 
+  mutate(lower.ci = acc.m-acc.ci,
+         upper.ci = acc.m+acc.ci,
+         lower.se = acc.m-acc.se,
+         upper.se = acc.m+acc.se)
+
+r5_allG %>% dplyr::select(netNum, classf, part, acc.m, acc.sd) %>% kable(digits=2)
+# %>% spread(key=part, value=acc.m) 
+
+```
+
+```{r, fig.width= 14, fig.height=10}
+library(RColorBrewer)
+# display.brewer.all()
+
+
+r5_allL.1 <- r5_allL #%>% filter(netNum == 'All')
+r5_allG.1 <- r5_allG #%>% filter(netNum == 'All')
+# r5_allG.1 <- r5_allW %>% filter(netNum == 'All')
+r5.p1.all.plot1 <- ggplot(data=r5_allL.1, aes(x=part, y=acc, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  size = 0.15, color = "black" ) +
+  geom_hline(yintercept=50, linetype='dashed', color="gray20", alpha =1, size=1) +
+  facet_grid(.~netNum, scales="free_x", space = "free") +
+  # geom_dotplot(binaxis = "y", stackdir = "center", stackratio = 0.5,
+  #              color = "black", alpha = 0.5, #position = "nudge",
+  #              position = position_jitter(0.15),
+  #              inherit.aes = TRUE, binwidth = 0.4) +
+  # geom_jitter(aes(x=cond, y=z, fill=cond,color = cond), 
+  #             position=position_jitter(0.1), cex=2
+  #             ) + 
+  geom_point(data=r5_allL.1, aes(x=part, y=acc, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r5_allG.1, aes(x=part, y= acc.m, ymin=acc.m-acc.ci, ymax=acc.m+acc.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +
+  coord_cartesian(ylim = c(0, 100), clip = "on") +
+  labs(x = "Part", y = "Classification Accuracy") +
+  ggtitle("FC - Yeo122net Ridge MVPC") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r5.p1.all.plot1
+```
+
+<br>
+
+각 파트별 정확도가 Chance level 인 50% 보다 유의하게 높은지 살펴본다.
+
+<br>
+
+```{r, collapse=TRUE, warning=F, message=FALSE, echo=T}
+
+r5_allL.1.tmp <- r5_allL 
+p_h1 <- r5_allL.1.tmp %>% group_by(classf, netNum, part) %>% 
+  rstatix::t_test(acc ~ 1, mu = 50,
+                  detailed=T) %>%
+  dplyr::select(classf, netNum, part, group1, group2, estimate, conf.low, conf.high, df, statistic, p)
+p_h2 <- r5_allL.1.tmp %>% group_by(classf, netNum, part) %>% 
+  rstatix::cohens_d(acc ~ 1, mu = 50, ci = F) %>%
+  dplyr::select(classf, netNum, part, group1, group2, effsize, magnitude)
+Res <-  merge(p_h1, p_h2, by=c("classf", "netNum", "part", "group1", "group2")) 
+Res[c(order(Res$classf, Res$netNum, Res$part) ),] %>% kable(digits =3)
+
+```
+<br>
+
+```{r, echo=T}
+r5_allL.1.tmp <- r5_allL# %>% # filter(netNum == "All")
+
+r5.aov1.tmp <- aov_ez(id="sn", dv="acc", data = r5_allL.1.tmp, within = c("netNum","part"))
+# summary(r1.aov1)
+nice(r5.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r5_allL.1.tmp %>% group_by(netNum) %>%
+  rstatix::pairwise_t_test(acc ~ part,
+                           p.adjust.method="holm",
+                           paired=T, detailed=T) %>%
+  dplyr::select(netNum, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif)
+p_h2 <- r5_allL.1.tmp %>% group_by(netNum) %>%
+  rstatix::cohens_d(acc ~ part, paired=T, ci = F) %>%
+  dplyr::select(netNum, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("netNum","group1", "group2")) %>% kable(digits=3)
+```
+
+
+<br>
+
+***
+
+<br>
+
+## MVPC - Ridge, All Group
+
+<br>
+
+이어서 전체 참가자를 대상으로 참가자 간 서로 다른 구획별 패턴이 성공적으로 분류되는지 살펴보았다. 분석 모델로는 Ridge를 사용하였다. 참가자 간 패턴 분류 결과는 아래와 같이 계산된다. 먼저 전체 20명의 참가자 중 19명을 Training set으로 구성하고, 나머지 한명을 Test set으로 구성한다. 19명의 Training Set에서는 Run 번호를 기준으로 Leave One Group Out 기법을 수행하여 Train & Validation을 수행한다. 이를 통해 모델 퍼포먼스를 확인하고 나머지 한명의 Test Set에 대하여 Test를 수행한다. 이 과정을 참가자별로 20번 반복하여 20번의 Validation & Testing Accuracy를 평균화하였다.
+
+<br>
+
+```{r, collapse=TRUE}
+r7 <- read.csv("py_output/sFC_mvpc_grp_opt3_std2.csv", header = T)
+
+glimpse(r7, width = 70)
+
+r7_l <- r7 %>% filter(tSN %in% targ_sn)
+r7_l$tSN = factor(r7_l$tSN)
+r7_l$netNum = factor(r7_l$net,
+                     levels = c(10, 0, 1, 2, 3, 4, 5, 6, 7, 9),
+                     labels = c('All', 'Btw', 'Vis', 'SM', 'FPN',
+                                'VAN', 'DAN', 'DMN', 'Limb', 'SubCor'))
+r7_l$net = factor(r7_l$net,
+                     levels = c(10, 0, 1, 2, 3, 4, 5, 6, 7, 9),
+                     labels = c('All', 'Btw', 'Vis', 'SM', 'FPN',
+                                'VAN', 'DAN', 'DMN', 'Limb', 'SubCor'))
+
+r7_l$classf = factor(r7_l$classifier, labels = c('Ridge'))
+
+r7_1 <- r7_l %>% dplyr::select(tSN, net, classifier, vAcc, tAcc)
+r7_1 <- gather(r7_1, type, acc, vAcc:tAcc, factor_key=TRUE)
+r7_1$type <- factor(r7_1$type, levels=c("vAcc","tAcc"), labels=c("valid","test"))
+
+
+r7_2 <- r7_l %>% dplyr::select(tSN, net, classifier, 
+                               p1_vAcc, p2_vAcc,
+                               p1_tAcc, p2_tAcc)
+r7_2 <- gather(r7_2, type, acc, p1_vAcc:p2_tAcc, factor_key=TRUE)
+r7_2$type <- factor(r7_2$type, 
+                    levels=c("p1_vAcc","p2_vAcc","p1_tAcc","p2_tAcc"),
+                    labels=c("p1_valid","p2_valid","p1_test","p2_test"))
+r7_2 <- separate(r7_2, col=type, sep= "_", into = c("part","type"))
+r7_2$type <- factor(r7_2$type, levels=c("valid","test"), labels=c("valid","test"))
+r7_2$part <- factor(r7_2$part, levels=c("p1","p2"), labels=c("p1","p2"))
+
+```
+
+<br>
+
+참가자 간 분류의 Validation & Test 결과를 요약하였다. 
+
+
+<br>
+
+```{r, collapse=TRUE}
+
+r7_acc <- r7_l %>% dplyr::select(tSN, net, classifier, vAcc, tAcc) %>% 
+  gather(type, acc, vAcc:tAcc, factor_key=T)
+r7_acc$acc <- r7_acc$acc
+r7_acc$type <- factor(r7_acc$type, levels = c("vAcc", "tAcc"),
+                      labels = c("valid", "test"))
+r7_acc %>% dplyr::filter(net=="All") %>% 
+  dplyr::select(tSN, net, type, acc) %>% spread(key = tSN, value = acc) %>% kable(digits = 1)
+
+r7_p <- r7_l %>% dplyr::select(tSN, net, classifier, perm_vPval, perm_tPval) %>% 
+  gather(type, pVal, perm_vPval:perm_tPval, factor_key=T)
+r7_p$type <- factor(r7_p$type, levels = c("perm_vPval", "perm_tPval"),
+                    labels = c("valid", "test"))
+r7_p %>% dplyr::filter(net=="All") %>% 
+  dplyr::select(tSN, net, type, pVal) %>% spread(key = tSN, value = pVal) %>% kable(digits = 3)
+
+
+# glimpse(r7_1)
+# subject-level, long format
+r7_11 <- r7_1 %>% dplyr::select(tSN, net, classifier, type, acc)
+r7_allL1 <- r7_11 %>% group_by(tSN, net, type) %>%
+  dplyr::summarise(acc=mean(acc)) %>%
+  ungroup()
+
+r7_allW1 <- r7_allL1 %>% spread(key=type, value=acc)
+
+r7_allG1 <- r7_allL1 %>% group_by(net,type) %>%
+  dplyr::summarise(acc.m = mean(acc), acc.sd = sd(acc)) %>%
+  ungroup()
+r7_allG1$acc.se <- Rmisc::summarySEwithin(data = r7_allL1, measurevar = "acc", 
+                                          idvar = "tSN", withinvars = c("net","type"))$se
+r7_allG1$acc.ci <- Rmisc::summarySEwithin(data = r7_allL1, measurevar = "acc", 
+                                          idvar = "tSN", withinvars = c("net","type"))$ci
+r7_allG1 <- r7_allG1 %>% 
+  mutate(lower.ci = acc.m-acc.ci,
+         upper.ci = acc.m+acc.ci,
+         lower.se = acc.m-acc.se,
+         upper.se = acc.m+acc.se)
+r7_allG1 %>% dplyr::select(net, type, acc.m, lower.ci, upper.ci) %>% kable(digits = 2)
+
+# subject-level, wide format
+r7_21 <- r7_2 %>% dplyr::select(tSN, net, classifier, part, type, acc)
+r7_allL2 <- r7_21 %>% group_by(tSN, net, type, part) %>%
+  dplyr::summarise(acc=mean(acc)) %>%
+  ungroup()
+r7_allL2 %>% spread(key = part, value =acc)
+r7_allW2 <- r7_allL2 %>% spread(key = part, value =acc)
+
+r7_allG2 <- r7_allL2 %>% group_by(net ,type, part) %>%
+  dplyr::summarise(acc.m = mean(acc), acc.sd = sd(acc)) %>%
+  ungroup()
+r7_allG2$acc.se <- Rmisc::summarySEwithin(data = r7_allL2, measurevar = "acc", 
+                                          idvar = "tSN", withinvars = c("net","type", "part"))$se
+r7_allG2$acc.ci <- Rmisc::summarySEwithin(data = r7_allL2, measurevar = "acc", 
+                                          idvar = "tSN", withinvars = c("net","type", "part"))$ci
+r7_allG2 <- r7_allG2 %>% 
+  mutate(lower.ci = acc.m-acc.ci,
+         upper.ci = acc.m+acc.ci,
+         lower.se = acc.m-acc.se,
+         upper.se = acc.m+acc.se)
+r7_allG2 %>% dplyr::select(net, type, part, acc.m, lower.ci, upper.ci) %>% kable(digits = 2)
+```
+
+<br>
+
+```{r, fig.width= 8, fig.height=8}
+library(RColorBrewer)
+# display.brewer.all()
+
+
+r7_allL.1 <- r7_allL1 #%>% filter(netNum == 'All')
+r7_allG.1 <- r7_allG1 #%>% filter(netNum == 'All')
+# r7_allG.1 <- r7_allW %>% filter(netNum == 'All')
+r7.p1.all.plot1 <- ggplot(data=r7_allL.1, aes(x=type, y=acc, fill=type, shpae=type)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  size = 0.15, color = "black") +
+  geom_hline(yintercept=50, linetype='dashed', color="gray20", alpha =1, size=1) +
+  facet_grid(.~net, scales="free_x", space = "free") + 
+             #labeller = labeller(type = c("valid" = "valid",
+            #                                "test" = "test\nSVM"))) +
+  # geom_dotplot(binaxis = "y", stackdir = "center", stackratio = 0.5,
+  #              color = "black", alpha = 0.5, #position = "nudge",
+  #              position = position_jitter(0.15),
+  #              inherit.aes = TRUE, binwidth = 0.4) +
+  # geom_jitter(aes(x=cond, y=z, fill=cond,color = cond), 
+  #             position=position_jitter(0.1), cex=2
+  #             ) + 
+  geom_segment(data=r7_allW1, inherit.aes = FALSE,
+               aes(x=1, y=filter(r7_allW1)$valid,
+                   xend=2, yend=filter(r7_allW1)$test),
+               color="gray90", alpha = .7) +
+  geom_point(data=r7_allL.1, aes(x=type, y=acc, fill=type), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r7_allG.1, aes(x=type, y= acc.m, ymin=acc.m-acc.ci, ymax=acc.m+acc.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_fill_brewer(palette="Set2", labels = c('Validation','Test')) + 
+  coord_cartesian(ylim = c(0, 100), clip = "on") +
+  labs(x = "Network", y = "Classification Accuracy") +
+    ggtitle("Group-Level, Ridge, Validation vs. Test") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r7.p1.all.plot1
+```
+
+<br>
+
+```{r, fig.width= 8, fig.height=8}
+library(RColorBrewer)
+# display.brewer.all()
+
+r7_allL.2 <- r7_allL2 %>% filter(type == 'test')
+r7_allW2.2 <- r7_allW2 %>% filter(type == 'test')
+r7_allG.2 <- r7_allG2 %>% filter(type == 'test')
+# r7_allG.2 <- r7_allW %>% filter(netNum == 'All')
+r7.p1.all.plot2 <- ggplot(data=r7_allL.2, aes(x=part, y=acc, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  size = 0.15, color = "black") +
+  facet_grid(.~net, scales="free_x", space = "free") + 
+  geom_hline(yintercept=50, linetype='dashed', color="gray20", alpha =1, size=1) +
+  geom_point(data=r7_allL.2, aes(x=part, y=acc, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  
+  geom_segment(data=r7_allW2.2, inherit.aes = FALSE,
+               aes(x=1, y=filter(r7_allW2.2)$p1,
+                   xend=2, yend=filter(r7_allW2.2)$p2),
+               color="gray90", alpha = .7) +
+  
+  
+  geom_errorbar(data=r7_allG.2, aes(x=part, y= acc.m, ymin=acc.m-acc.se, ymax=acc.m+acc.se), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +
+  coord_cartesian(ylim = c(0, 100), clip = "on") +
+  labs(x = "Type", y = "Test Accuracy") +
+  # scale_x_discrete(labels=c("Validation", "Test")) +
+  ggtitle("Group-Level, Ridge, First vs. Second") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r7.p1.all.plot2
+```
+
+<br>
+
+분류 결과가 Chance Level인 50% 보다 유의하게 큰지 확인하였다.
+
+<br>
+
+```{r, echo=T}
+r7_allL.1.tmp <- r7_allL1
+p_h1 <- r7_allL.1.tmp %>% group_by(net, type) %>% 
+  rstatix::t_test(acc ~ 1, mu = 50,
+                  detailed=T) %>%
+  dplyr::select(net, type, group1, group2, estimate, conf.low, conf.high, df, statistic, p)
+p_h2 <- r7_allL.1.tmp %>% group_by(net, type) %>% 
+  rstatix::cohens_d(acc ~ 1, mu = 50, ci = F) %>%
+  dplyr::select(net, type, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net", "type", "group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+```{r, echo=T}
+r7_allL.1.tmp <- r7_allL1
+
+r7.aov1.tmp <- aov_ez(id="tSN", dv="acc", data = r7_allL.1.tmp, within = c("net","type"))
+# summary(r1.aov1)
+nice(r7.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r7_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::pairwise_t_test(acc ~ type,
+                           p.adjust.method="holm",
+                           paired=T, detailed=T) %>%
+  dplyr::select(net, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif)
+p_h2 <- r7_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::cohens_d(acc ~ type, paired=T, ci = F) %>%
+  dplyr::select(net, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net","group1", "group2")) %>% kable(digits=3)
+
+p_h1 <- r7_allL.1.tmp %>% group_by(type) %>% 
+  rstatix::pairwise_t_test(acc ~ net,
+                           p.adjust.method="holm",
+                           paired=T, detailed=T) %>%
+  dplyr::select(type, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif)
+p_h2 <- r7_allL.1.tmp %>% group_by(type) %>% 
+  rstatix::cohens_d(acc ~ net, paired=T, ci = F) %>%
+  dplyr::select(type, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("type","group1", "group2")) %>% kable(digits=3)
+
+```
+
+<br>
+
+```{r, echo=T}
+r7_allL.1.tmp <- r7_allL2
+p_h1 <- r7_allL.1.tmp %>% group_by(net, type, part) %>% 
+  rstatix::t_test(acc ~ 1, mu = 50,
+                  detailed=T) %>%
+  dplyr::select(net, type, part, group1, group2, estimate, conf.low, conf.high, df, statistic, p)
+p_h2 <- r7_allL.1.tmp %>% group_by(net, type, part) %>% 
+  rstatix::cohens_d(acc ~ 1, mu = 50, ci = F) %>%
+  dplyr::select(net, type, part, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net","type", "part", "group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+네트워크 별, 타입 별 (Valid vs. Test)로 정확도 차이가 있는지 살펴본다. 
+
+<br>
+
+```{r, echo=T}
+r7_allL.1.tmp <- r7_allL2
+
+r7.aov1.tmp <- aov_ez(id="tSN", dv="acc", data = r7_allL.1.tmp, within = c("net","type", "part"))
+# summary(r1.aov1)
+nice(r7.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r7_allL.1.tmp %>% group_by(net, part) %>% 
+  rstatix::pairwise_t_test(acc ~ type,
+                           p.adjust.method="holm",
+                           paired=T, detailed=T) %>%
+  dplyr::select(net, part, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif)
+p_h2 <- r7_allL.1.tmp %>% group_by(net ,part) %>% 
+  rstatix::cohens_d(acc ~ type, paired=T, ci = F) %>%
+  dplyr::select(net, part, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net","part", "group1", "group2")) %>% kable(digits=3)
+
+p_h1 <- r7_allL.1.tmp %>% group_by(net, type) %>% 
+  rstatix::pairwise_t_test(acc ~ part,
+                           p.adjust.method="holm",
+                           paired=T, detailed=T) %>%
+  dplyr::select(net, type, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif)
+p_h2 <- r7_allL.1.tmp %>% group_by(net, type) %>% 
+  rstatix::cohens_d(acc ~ part, paired=T, ci = F) %>%
+  dplyr::select(net, type, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net","type", "group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+***
+
+<br>
+
+## Representational Similarity Analysis
+
+<br>
+
+분류 분석 결과를 보충하기 위해 연결성 패턴에 대한 RSA 분석을 Matlab으로 수행하였다. 결과적으로 산출된 패턴 유사성에 대한 통계 분석을 수행한다. 
+
+<br>
+
+
+```{r, collapse=TRUE}
+r1 <- read.csv("data/r1_p1_sum_opt3.csv", header = T)
+glimpse(r1, width = 70)
+
+r1_l <- r1 %>% filter(sn %in% targ_sn)
+r1_l$sn = factor(r1_l$sn)
+r1_l$stimIdx = factor(r1_l$stimIdx)
+r1_l$netLabel = factor(r1_l$netLabel, 
+                       levels = c('all_net',
+                                  '1. Visual',
+                                  '2. SM',
+                                  '3. Control',
+                                  '4. Sal/vAtt',
+                                  '5. DAN',
+                                  '6. DMN',
+                                  '7. Limbic',
+                                  '8. TP',
+                                  '9. SubCor'),
+                       labels = c('All','Vis','SM','FPN','VAN','DAN','DMN','Limb','TP','SubCor'))
+
+
+r1_l$netNum = factor(r1_l$netNum)
+r1_l$run = factor(r1_l$run)
+r1_l$order = factor(r1_l$order)
+
+r1_l <- merge(r1_l, bh_t, by= c('sn', 'stimIdx'))
+r1_l <- r1_l %>% filter(check == 0) %>% filter(corr == 1)
+
+r1_1 = r1_l %>% dplyr::select(sn, stimIdx, netLabel, netNum, nNode, run, order, 
+                              wn_p12, btw_p12, btw_p21)
+r1_2 = r1_l %>% dplyr::select(sn, stimIdx, netLabel, netNum, nNode, run, order, 
+                              btw_allTC, btw_p1, btw_p2)
+
+r1_3 = r1_l %>% dplyr::select(sn, stimIdx, netLabel, netNum, nNode, run, order, 
+                              btw_p1, btw_p2, btw_p12, btw_p21)
+
+
+r1_1 <- gather(r1_1, key = type, value = r_type, wn_p12:btw_p21)
+r1_1$type <- factor(r1_1$type, 
+                    levels = c('wn_p12', 
+                               'btw_p12', 'btw_p21'),
+                    labels = c('self12',
+                               'other12',
+                               'other21'))
+
+r1_2 <- gather(r1_2, key = part, value = r_part, btw_allTC:btw_p2)
+r1_2$part <- factor(r1_2$part, 
+                    levels = c("btw_allTC", "btw_p1", "btw_p2"),
+                    labels = c('all', 'p1', 'p2'))
+
+
+r1_3 <- gather(r1_3, key = part, value = r_part, btw_p1:btw_p21)
+r1_3$part <- factor(r1_3$part, 
+                    levels = c("btw_p1", "btw_p2",
+                               "btw_p12", 
+                               "btw_p21"),
+                    labels = c('p1_wn', 'p2_wn',
+                               'p1_2', 'p2_1'))
+
+```
+
+<br>
+
+### RSA : Within Stim vs. Between Stim
+
+<br>
+
+먼저 각 영상별로 고유한 패턴이 있는지 확인하기 위해 within 영상, between 영상 간 패턴 유사성을 비교하였다. 
+
+<br>
+
+```{r, collapse=TRUE}
+# glimpse(r1_1)
+# subject-level, long format
+r1_allL <- r1_1 %>% group_by(sn, netLabel, type) %>%
+  dplyr::summarise(r=mean(r_type)) %>%
+  ungroup()
+# r1_allL %>% kable(digits=2)
+
+# subject-level, wide format
+r1_allW <- r1_allL %>% spread(key=type, value = r)
+r1_allL.1 <- r1_allW %>% mutate(self = (self12),
+                                other = (other12+other21)/2) %>% 
+  dplyr::select(sn, netLabel, self, other) %>% 
+  gather(key = type, value = r, self:other, factor_key = T)
+r1_allW.1 <- r1_allL.1 %>% spread(key=type, value = r)
+# r1_allW.1 %>% dplyr::filter(netLabel == "all_net") %>% kable(digits=2)
+# r1_allL.1 %>% filter(sn == 2) %>%  spread(key=type, value = r)
+
+# summary table: grand mean
+r1_allG <- r1_allL.1 %>% group_by(netLabel, type) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+r1_allG$r.se <- Rmisc::summarySEwithin(data = r1_allL.1, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netLabel","type"))$se
+r1_allG$r.ci <- Rmisc::summarySEwithin(data = r1_allL.1, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netLabel","type"))$ci
+r1_allG <- r1_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r1_allG %>% dplyr::select(netLabel, type, r.m) %>%
+  spread(key=type, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+within 영상, between 영상 간 패턴 유사성을 요약하였다.
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+
+r1_allL <- r1_1 %>% group_by(sn, netNum, type) %>%
+  dplyr::summarise(r=mean(r_type)) %>%
+  ungroup()
+# r1_allL %>% kable(digits=2)
+
+# subject-level, wide format
+r1_allW <- r1_allL %>% spread(key=type, value = r)
+r1_allL.1 <- r1_allW %>% mutate(self = (self12),
+                                other = (other12+other21)/2) %>% 
+  dplyr::select(sn, netNum, self, other) %>% 
+  gather(key = type, value = r, self:other, factor_key = T)
+r1_allW.1 <- r1_allL.1 %>% spread(key=type, value = r)
+# r1_allL.1 %>% filter(netNum == 0) %>%  spread(key=type, value = r)
+
+# summary table: grand mean
+r1_allG <- r1_allL.1 %>% group_by(netNum, type) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+r1_allG$r.se <- Rmisc::summarySEwithin(data = r1_allL.1, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netNum","type"))$se
+r1_allG$r.ci <- Rmisc::summarySEwithin(data = r1_allL.1, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netNum","type"))$ci
+r1_allG <- r1_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+# plot 1
+targNet = c(0)
+r1_allL.p1 <- r1_allL.1 %>% filter(netNum %in% targNet)
+r1_allW.p1 <- r1_allW.1 %>% filter(netNum %in% targNet)
+r1_allG.p1 <- r1_allG %>% filter(netNum %in% targNet)
+
+r1.p1.all.plot1 <- ggplot(data=r1_allL.p1, aes(x=type, y=r, fill=type, shpae=type)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  # geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  facet_grid(.~netNum, scales="free_x", space = "free",
+             labeller = labeller(netNum = c("0" = "All",
+                                            "1" = "Vis",
+                                            "2" = "SM",
+                                            "3" = "Cont",
+                                            "4" = "sal/VAtt",
+                                            "5" = "DAN",
+                                            "6" = "DMN",
+                                            "7" = "Limb",
+                                            "8" = "TP",
+                                            "9" = "SubCor"))) +
+  geom_point(data=r1_allL.p1, aes(x=type, y=r, fill=type), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_segment(data=filter(r1_allW.p1), inherit.aes = FALSE,
+               aes(x=1, y=filter(r1_allW.p1)$self,
+                   xend=2, yend=filter(r1_allW.p1)$other),
+               color="gray90") +
+  geom_errorbar(data=r1_allG.p1, aes(x=type, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_x_discrete(labels=c("Within Stim", "Others")) +
+  scale_fill_manual(values = c("#F17402", "#2C57AA"), # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                    labels = c("Within Stim", "Others")) +
+  scale_color_manual(values = c("#F17402", "#2C57AA"), # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                     labels = c("Within Stim", "Others")) +
+  coord_cartesian(ylim = c(-0.2, 0.7), clip = "on") +
+  labs(x = "Type", y = "Functional Connectivity (FC)") +
+  ggtitle("FC - Yeo122net RSA") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r1.p1.all.plot1
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+# plot 2
+targNet = c(1, 2, 3, 4, 5, 6, 7, 8, 9)
+r1_allL.p2 <- r1_allL.1 %>% filter(netNum %in% targNet)
+r1_allW.p2 <- r1_allW.1 %>% filter(netNum %in% targNet)
+r1_allG.p2 <- r1_allG %>% filter(netNum %in% targNet)
+
+r1.p1.all.plot2 <- ggplot(data=r1_allL.p2, aes(x=type, y=r, fill=type, shpae=type)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  facet_grid(.~netNum, scales="free_x", space = "free",
+             labeller = labeller(netNum = c("0" = "All",
+                                            "1" = "Vis",
+                                            "2" = "SM",
+                                            "3" = "Cont",
+                                            "4" = "sal/VAtt",
+                                            "5" = "DAN",
+                                            "6" = "DMN",
+                                            "7" = "Limb",
+                                            "8" = "TP",
+                                            "9" = "SubCor"))) +
+  geom_point(data=r1_allL.p2, aes(x=type, y=r, fill=type), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_segment(data=filter(r1_allW.p2), inherit.aes = FALSE,
+               aes(x=1, y=filter(r1_allW.p2)$self,
+                   xend=2, yend=filter(r1_allW.p2)$other),
+               color="gray90") +
+  geom_errorbar(data=r1_allG.p2, aes(x=type, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_x_discrete(labels=c("Within Stim", "Others")) +
+  scale_fill_manual(values = c("#F17402", "#2C57AA"), # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                    labels = c("Within Stim", "Others")) +
+  scale_color_manual(values = c("#F17402", "#2C57AA"), # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                     labels = c("Within Stim", "Others")) +
+  coord_cartesian(ylim = c(-0.5, 1), clip = "on") +
+  labs(x = "Type", y = "Functional Connectivity (FC)") +
+  ggtitle("FC - Yeo122net RSA") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r1.p1.all.plot2
+```
+
+<br>
+
+전체 네트워크에서 within 영상, between 영상 간 패턴 유사성이 유의한 차이를 보이는지 확인하였다.
+
+<br>
+
+```{r, collapse=TRUE}
+r1_allL.1.tmp <- r1_allL.1 %>% filter(netNum == 0)
+
+r1.aov1.tmp <- aov_ez(id="sn", dv="r", data = r1_allL.1.tmp, within = c("type"))
+# summary(r1.aov1)
+nice(r1.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r1_allL.1.tmp %>% 
+  rstatix::pairwise_t_test(r ~ type, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r1_allL.1.tmp %>% # group_by(rep) %>% 
+  rstatix::cohens_d(r ~ type, paired=T, ci = F) %>% 
+  dplyr::select(group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+### RSA : Within Part vs Between Part
+
+<br>
+
+이어서 참가자 간에서 각 영상 간 전/후반부의 패턴 유사성을 확인한다. 구체적으로 여러 영상에 걸친 전/후반부 각각의 패턴 유사성을 Within으로 두고, 서로 다른 영상, 파트 간의 유사성을 Between으로 두어 통계 분석을 수행하였다. 먼저 요약치를 확인한다.  
+
+<Br>
+
+```{r, collapse=TRUE}
+# subject-level, long format
+r3_allL <- r1_3 %>% group_by(sn, netLabel, part) %>%
+  dplyr::summarise(r=mean(r_part)) %>%
+  ungroup()
+# r3_allL %>% kable(digits=2)
+
+# subject-level, wide format
+r3_allW <- r3_allL %>% spread(key=part, value = r)
+r3_allL.1 <- r3_allW %>% mutate(p1_self = p1_wn,
+                                p2_self = p2_wn,
+                                p1_other = (p1_2),
+                                p2_other = (p2_1)) %>% 
+  dplyr::select(sn, netLabel, p1_self, p2_self, p1_other, p2_other) %>% 
+  gather(key = part, value = r, p1_self:p2_other, factor_key = T) %>% 
+  separate(col = part,  sep="_", into =c('part','type'))
+
+r3_allL.1$part <- factor(r3_allL.1$part)
+r3_allL.1$type <- factor(r3_allL.1$type, levels = c('self','other'))
+# r3_allL.1 %>% filter(sn == 2) %>%  spread(key=part, value = r)
+r3_allL.1 %>% dplyr::filter(netLabel == "all_net") %>% 
+  spread(key = part, value = r) %>% kable(digits=2)
+
+# summary table: grand mean
+r3_allG <- r3_allL.1 %>% group_by(netLabel, part, type) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+r3_allG$r.se <- Rmisc::summarySEwithin(data = r3_allL.1, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netLabel","part","type"))$se
+r3_allG$r.ci <- Rmisc::summarySEwithin(data = r3_allL.1, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netLabel","part","type"))$ci
+r3_allG <- r3_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r3_allG %>% dplyr::select(netLabel, part, type, r.m) %>%
+  spread(key=type, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+
+# subject-level, long format
+r3_allL <- r1_3 %>% group_by(sn, netNum, part) %>%
+  dplyr::summarise(r=mean(r_part)) %>%
+  ungroup()
+# r3_allL %>% kable(digits=2)
+
+# subject-level, wide format
+r3_allW <- r3_allL %>% spread(key=part, value = r)
+r3_allL.1 <- r3_allW %>% mutate(p1_self = p1_wn,
+                                p2_self = p2_wn,
+                                p1_other = (p1_2),
+                                p2_other = (p2_1)) %>% 
+  dplyr::select(sn, netNum, p1_self, p2_self, p1_other, p2_other) %>% 
+  gather(key = part, value = r, p1_self:p2_other, factor_key = T) %>% 
+  separate(col = part,  sep="_", into =c('part','type'))
+
+r3_allL.1$part <- factor(r3_allL.1$part)
+r3_allL.1$type <- factor(r3_allL.1$type, levels = c('self','other'))
+
+r3_allW.1 <- r3_allL.1 %>% spread(key=type, value = r)
+
+# summary table: grand mean
+r3_allG <- r3_allL.1 %>% group_by(netNum, part, type) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+r3_allG$r.se <- Rmisc::summarySEwithin(data = r3_allL.1, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netNum","part","type"))$se
+r3_allG$r.ci <- Rmisc::summarySEwithin(data = r3_allL.1, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netNum","part","type"))$ci
+r3_allG <- r3_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+
+
+# plot 1
+targNet = c(0)
+r3_allL.p1 <- r3_allL.1 %>% filter(netNum %in% targNet)
+r3_allW.p1 <- r3_allW.1 %>% filter(netNum %in% targNet)
+r3_allG.p1 <- r3_allG %>% filter(netNum %in% targNet)
+
+r3.p1.all.plot1 <- ggplot(data=r3_allL.p1, aes(x=part, y=r, fill=type, shpae=type)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  facet_grid(.~netNum, scales="free_x", space = "free",
+             labeller = labeller(netNum = c("0" = "All",
+                                            "1" = "Vis",
+                                            "2" = "SM",
+                                            "3" = "Cont",
+                                            "4" = "sal/VAtt",
+                                            "5" = "DAN",
+                                            "6" = "DMN",
+                                            "7" = "Limb",
+                                            "8" = "TP",
+                                            "9" = "SubCor"))) +
+  geom_point(data=r3_allL.p1, aes(x=part, y=r, fill=type), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_segment(data=filter(r3_allW.p1, part == "p1"), inherit.aes = FALSE,
+               aes(x=0.8, y=filter(r3_allW.p1, part == "p1")$self,
+                   xend=1.2, yend=filter(r3_allW.p1, part == "p1")$other),
+               color="gray90") +
+  geom_segment(data=filter(r3_allW.p1, part == "p2"), inherit.aes = FALSE,
+               aes(x=1.8, y=filter(r3_allW.p1, part == "p2")$self,
+                   xend=2.2, yend=filter(r3_allW.p1, part == "p2")$other),
+               color="gray90") +
+  geom_errorbar(data=r3_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_x_discrete(labels=c("Part 1","Part 2")) +
+  scale_fill_manual(values = c("#F17402", "#2C57AA"), # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                    labels = c("Within", "Between")) +
+  scale_color_manual(values = c("#F17402", "#2C57AA"), # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                     labels = c("Within", "Between")) +
+  coord_cartesian(ylim = c(-0.2, 0.7), clip = "on") +
+  labs(x = "Part", y = "Functional Connectivity (FC)") +
+  ggtitle("FC - Yeo122net RSA") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r3.p1.all.plot1
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+
+# plot 2
+targNet = c(1, 2, 3, 4, 5, 6, 7, 8, 9)
+r3_allL.p1 <- r3_allL.1 %>% filter(netNum %in% targNet)
+r3_allW.p1 <- r3_allW.1 %>% filter(netNum %in% targNet)
+r3_allG.p1 <- r3_allG %>% filter(netNum %in% targNet)
+
+r3.p1.all.plot2 <- ggplot(data=r3_allL.p1, aes(x=part, y=r, fill=type, shpae=type)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  facet_grid(.~netNum, scales="free_x", space = "free",
+             labeller = labeller(netNum = c("0" = "All",
+                                            "1" = "Vis",
+                                            "2" = "SM",
+                                            "3" = "Cont",
+                                            "4" = "sal/VAtt",
+                                            "5" = "DAN",
+                                            "6" = "DMN",
+                                            "7" = "Limb",
+                                            "8" = "TP",
+                                            "9" = "SubCor"))) +
+  geom_point(data=r3_allL.p1, aes(x=part, y=r, fill=type), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_segment(data=filter(r3_allW.p1, part == "p1"), inherit.aes = FALSE,
+               aes(x=0.8, y=filter(r3_allW.p1, part == "p1")$self,
+                   xend=1.2, yend=filter(r3_allW.p1, part == "p1")$other),
+               color="gray90") +
+  geom_segment(data=filter(r3_allW.p1, part == "p2"), inherit.aes = FALSE,
+               aes(x=1.8, y=filter(r3_allW.p1, part == "p2")$self,
+                   xend=2.2, yend=filter(r3_allW.p1, part == "p2")$other),
+               color="gray90") +
+  geom_errorbar(data=r3_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_x_discrete(labels=c("Part 1","Part 2")) +
+  scale_fill_manual(values = c("#F17402", "#2C57AA"), # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                    labels = c("Within", "Between")) +
+  scale_color_manual(values = c("#F17402", "#2C57AA"), # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                     labels = c("Within", "Between")) +
+  
+  # coord_cartesian(ylim = c(-0.2, 0.7), clip = "on") +
+  labs(x = "Part", y = "Functional Connectivity (FC)") +
+  ggtitle("FC - Yeo122net RSA") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r3.p1.all.plot2
+
+```
+
+<br>
+
+각 구획 (전/후반부)과 유형 (Within(Self), Between(Other))을 요인으로 통계 분석을 수행하였다.
+
+<br>
+
+```{r, echo=T}
+r3_allL.1.tmp <- r3_allL.1 %>% filter(netNum == 0)
+
+r3.aov1.tmp <- aov_ez(id="sn", dv="r", data = r3_allL.1.tmp, within = c("part","type"))
+# summary(r1.aov1)
+nice(r3.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r3_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::pairwise_t_test(r ~ type, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(part, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r3_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::cohens_d(r ~ type, paired=T, ci = F) %>% 
+  dplyr::select(part, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("part","group1", "group2")) %>% kable(digits=3)
+
+p_h1 <- r3_allL.1.tmp %>% group_by(type) %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(type, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r3_allL.1.tmp %>% group_by(type) %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(type, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("type","group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+```{r, echo=T}
+r3_allL.1.tmp <- r3_allL.1# %>% filter(netNum == 0)
+
+r3.aov1.tmp <- aov_ez(id="sn", dv="r", data = r3_allL.1.tmp, within = c("netNum","part","type"))
+# summary(r1.aov1)
+nice(r3.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r3_allL.1.tmp %>% group_by(netNum, part) %>% 
+  rstatix::pairwise_t_test(r ~ type, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(netNum, part, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r3_allL.1.tmp %>% group_by(netNum, part) %>% 
+  rstatix::cohens_d(r ~ type, paired=T, ci = F) %>% 
+  dplyr::select(netNum, part, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("netNum","part","group1", "group2")) %>% kable(digits=3)
+
+p_h1 <- r3_allL.1.tmp %>% group_by(netNum, type) %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(netNum, type, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r3_allL.1.tmp %>% group_by(netNum, type) %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(netNum, type, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("netNum","type","group1", "group2")) %>% kable(digits=3)
+```
+<br>
+
+### RSA - Difference : Within Part vs Between Part
+
+<br>
+
+보조적인 분석으로 Within-Between의 차이가 파트별로 유의하게 다른지를 살펴본다.
+
+<br>
+
+```{r, collapse=TRUE}
+# subject-level, long format
+r4_allL <- r1_3 %>% group_by(sn, netLabel, part) %>%
+  dplyr::summarise(r=mean(r_part)) %>%
+  ungroup()
+# r4_allL %>% kable(digits=2)
+
+# subject-level, wide format
+r4_allW <- r4_allL %>% spread(key=part, value = r)
+r4_allL.1 <- r4_allW %>% mutate(p1_self = p1_wn,
+                                p2_self = p2_wn,
+                                p1_other = (p1_2),
+                                p2_other = (p2_1)) %>% 
+  dplyr::select(sn, netLabel, p1_self, p2_self, p1_other, p2_other) %>% 
+  gather(key = part, value = r, p1_self:p2_other, factor_key = T) %>% 
+  separate(col = part,  sep="_", into =c('part','type'))
+
+r4_allL.1$part <- factor(r4_allL.1$part)
+r4_allL.1$type <- factor(r4_allL.1$type, levels = c('self','other'))
+
+r4_allL.2 <- r4_allL.1 %>% spread(key = type, value = r) %>% mutate(r = self - other) %>% 
+  dplyr::select(sn, netLabel, part, r)
+# r4_allL.1 %>% filter(sn == 2) %>%  spread(key=part, value = r)
+# r4_allL.1 %>% dplyr::filter(netLabel == "all_net") %>% 
+#   spread(key = part, value = r) %>% kable(digits=2)
+
+# summary table: grand mean
+r4_allG <- r4_allL.2 %>% group_by(netLabel, part) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+r4_allG$r.se <- Rmisc::summarySEwithin(data = r4_allL.2, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netLabel","part"))$se
+r4_allG$r.ci <- Rmisc::summarySEwithin(data = r4_allL.2, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netLabel","part"))$ci
+r4_allG <- r4_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r4_allG %>% dplyr::select(netLabel, part, r.m) %>%
+  spread(key=part, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+
+# subject-level, long format
+r4_allL <- r1_3 %>% group_by(sn, netNum, part) %>%
+  dplyr::summarise(r=mean(r_part)) %>%
+  ungroup()
+# r4_allL %>% kable(digits=2)
+
+# subject-level, wide format
+r4_allW <- r4_allL %>% spread(key=part, value = r)
+r4_allL.1 <- r4_allW %>% mutate(p1_self = p1_wn,
+                                p2_self = p2_wn,
+                                
+                                p1_other = (p1_2),
+                                p2_other = (p2_1)) %>% 
+  dplyr::select(sn, netNum, p1_self, p2_self, p1_other, p2_other) %>% 
+  gather(key = part, value = r, p1_self:p2_other, factor_key = T) %>% 
+  separate(col = part,  sep="_", into =c('part','type'))
+
+r4_allL.1$part <- factor(r4_allL.1$part)
+r4_allL.1$type <- factor(r4_allL.1$type, levels = c('self','other'))
+
+r4_allL.2 <- r4_allL.1 %>% spread(key = type, value = r) %>% mutate(r = self - other) %>% 
+  dplyr::select(sn, netNum, part, r)
+
+r4_allW.2 <- r4_allL.2 %>% spread(key = part, value = r)
+
+# summary table: grand mean
+r4_allG <- r4_allL.2 %>% group_by(netNum, part) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+r4_allG$r.se <- Rmisc::summarySEwithin(data = r4_allL.2, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netNum","part"))$se
+r4_allG$r.ci <- Rmisc::summarySEwithin(data = r4_allL.2, measurevar = "r", 
+                                       idvar = "sn", withinvars = c("netNum","part"))$ci
+r4_allG <- r4_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+# all_net
+# 1. central visual
+# 2. control A
+# 3. control B
+# 4. control C
+# 5. default A
+# 6. default B
+# 7. default C
+# 8. dorsal attention A
+# 9. dorsal attention B
+# 10. limbic A
+# 11. limbic B
+# 12. peripheral visual
+# 13. salience / ventral attention A
+# 14. salience / ventral attention B
+# 15. somatomotor A
+# 16. somatomotor B
+# 17. temporal parietal
+# 18. subCor
+
+# plot 1
+targNet = c(0)
+r4_allL.p1 <- r4_allL.2 %>% filter(netNum %in% targNet)
+r4_allW.p1 <- r4_allW.2 %>% filter(netNum %in% targNet)
+r4_allG.p1 <- r4_allG %>% filter(netNum %in% targNet)
+
+r4.p1.all.plot1 <- ggplot(data=r4_allL.p1, aes(x=part, y=r, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  facet_grid(.~netNum, scales="free_x", space = "free",
+             labeller = labeller(netNum = c("0" = "All",
+                                            "1" = "Vis",
+                                            "2" = "SM",
+                                            "3" = "Cont",
+                                            "4" = "sal/VAtt",
+                                            "5" = "DAN",
+                                            "6" = "DMN",
+                                            "7" = "Limb",
+                                            "8" = "TP",
+                                            "9" = "SubCor"))) +
+  geom_point(data=r4_allL.p1, aes(x=part, y=r, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_segment(data=filter(r4_allW.p1), inherit.aes = FALSE,
+               aes(x=1, y=filter(r4_allW.p1)$p1,
+                   xend=2, yend=filter(r4_allW.p1)$p2),
+               color="gray90") +
+  geom_errorbar(data=r4_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_x_discrete(labels=c("Part 1","Part 2")) +
+  scale_fill_brewer(palette="Set2", # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                    labels=c("Part 1","Part 2")) +
+  scale_color_brewer(palette="Set2", # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                     labels=c("Part 1","Part 2")) +
+  
+  # coord_cartesian(ylim = c(-1, 1), clip = "on") +
+  labs(x = "Part", y = "Difference btw Self & Other") +
+  ggtitle("FC - Yeo122net RSA") +
+  theme_bw(base_size = 18) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+        legend.title = element_blank(),
+        legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r4.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r4.p1.all.plot1
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+
+# all_net
+# 1. central visual
+# 2. control A
+# 3. control B
+# 4. control C
+# 5. default A
+# 6. default B
+# 7. default C
+# 8. dorsal attention A
+# 9. dorsal attention B
+# 10. limbic A
+# 11. limbic B
+# 12. peripheral visual
+# 13. salience / ventral attention A
+# 14. salience / ventral attention B
+# 15. somatomotor A
+# 16. somatomotor B
+# 17. temporal parietal
+# 18. subCor
+
+# plot 2
+targNet = c(1, 2, 3, 4, 5, 6, 7, 8, 9)
+r4_allL.p1 <- r4_allL.2 %>% filter(netNum %in% targNet)
+r4_allW.p1 <- r4_allW.2 %>% filter(netNum %in% targNet)
+r4_allG.p1 <- r4_allG %>% filter(netNum %in% targNet)
+
+r4.p1.all.plot2 <- ggplot(data=r4_allL.p1, aes(x=part, y=r, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  facet_grid(.~netNum, scales="free_x", space = "free",
+             labeller = labeller(netNum = c("0" = "All",
+                                            "1" = "Vis",
+                                            "2" = "SM",
+                                            "3" = "Cont",
+                                            "4" = "sal/VAtt",
+                                            "5" = "DAN",
+                                            "6" = "DMN",
+                                            "7" = "Limb",
+                                            "8" = "TP",
+                                            "9" = "SubCor"))) +
+  geom_point(data=r4_allL.p1, aes(x=part, y=r, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_segment(data=filter(r4_allW.p1), inherit.aes = FALSE,
+               aes(x=1, y=filter(r4_allW.p1)$p1,
+                   xend=2, yend=filter(r4_allW.p1)$p2),
+               color="gray90") +
+  geom_errorbar(data=r4_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  scale_x_discrete(labels=c("Part 1","Part 2")) +
+  scale_fill_brewer(palette="Set2", # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                    labels=c("Part 1","Part 2")) +
+  scale_color_brewer(palette="Set2", # c("#F17402", "#2C57AA"), c("#feb24c", "#91bfdb")
+                     labels=c("Part 1","Part 2")) +
+  
+  # coord_cartesian(ylim = c(-1, 1), clip = "on") +
+  labs(x = "Part", y = "Difference btw Self & Other") +
+  ggtitle("FC - Yeo122net RSA") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# plot-control 3
+# ggsave("fig1_1.fmri.jpg", plot = r4.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r4.p1.all.plot2
+
+
+
+```
+
+<br>
+
+RM-ANOVA
+
+<br>
+
+```{r, echo=T}
+r4_allL.1.tmp <- r4_allL.2 # %>% filter(netNum == 0)
+
+r4.aov1.tmp <- aov_ez(id="sn", dv="r", data = r4_allL.1.tmp, within = c("netNum", "part"))
+# summary(r1.aov1)
+nice(r4.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r4_allL.1.tmp %>% group_by(netNum) %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(netNum, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r4_allL.1.tmp %>% group_by(netNum) %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(netNum, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("netNum","group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+***
+
+<br>
+
+## Univariate Analysis - FC value
+
+<br>
+
+각 네트워크 별로 Edge, 즉 Functional connectivity의 강도 자체가 구획별 차이를 보이는지 분석하였다. Edge의 부호(positive/negative)를 구분하여 살펴본다.
+
+<Br>
+
+```{r, collapse=TRUE}
+
+## FC
+r10 <- read.csv("py_output/sFC_net_v2.csv", header = T)
+r10_l <- r10 %>% dplyr::filter(sn %in% targ_sn)
+r10_l$sn = factor(r10_l$sn)
+r10_l$net = factor(r10_l$net,
+                   levels = c('All', 'Vis', 'SM', 'FPN',
+                                'VAN', 'DAN', 'DMN', 'Limb', 'SubCor','TP'),
+                     labels = c('All', 'Vis', 'SM', 'FPN',
+                                'VAN', 'DAN', 'DMN', 'Limb', 'SubCor','TP'))
+r10_l$idx = factor(r10_l$idx)
+r10_l$part = factor(r10_l$part, 
+                    levels = c(1,2),
+                    labels = c('p1','p2'))
+
+
+## Behavior
+r10_behav <- read.csv("data/aniFCnet_behav.csv", header = T)
+glimpse(r10_behav, width = 80)
+r10_behav <- r10_behav %>% dplyr::filter(sn %in% targ_sn)
+r10_behav$sn = factor(r10_behav$sn)
+r10_behav$idx = factor(r10_behav$stimIdx)
+r10_behav$corr = r10_behav$correctness
+r10_behav <- r10_behav %>% dplyr::select(sn, idx, corr, scores, check)
+
+r10_1 <- merge(r10_l, r10_behav, by = c("sn", "idx"))
+r10_2 <- r10_1 %>% filter(corr == 1, check != 1)
+```
+
+<br>
+
+### Positive Connectivity by Net & Part
+
+<br>
+
+Positive FC 값에 대한 분석을 수행한다.
+
+<br>
+
+```{r, collapse=TRUE}
+
+# subject-level, long format
+r10_allL <- r10_2 %>% group_by(sn, net, part) %>%
+  dplyr::summarise(r=mean(p_fc)) %>%
+  ungroup()
+
+# summary table: grand mean
+r10_allG <- r10_allL %>% group_by(net, part) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+
+r10_allG$r.se <- Rmisc::summarySEwithin(data = r10_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("net","part"))$se
+r10_allG$r.ci <- Rmisc::summarySEwithin(data = r10_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("net","part"))$ci
+r10_allG <- r10_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r10_allG %>% dplyr::select(net, part, r.m) %>%
+  spread(key=part, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r10_allL.p1 <- r10_allL
+r10_allG.p1 <- r10_allG
+
+r10.p1.all.plot1 <- ggplot(data=r10_allL.p1, aes(x=part, y=r, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  facet_grid(.~net, scales="free_x", space = "free") +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  geom_point(data=r10_allL.p1, aes(x=part, y=r, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r10_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  # scale_x_discrete(labels=c("Within", "Between")) +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +  scale_color_brewer(palette="Set2") + 
+  # coord_cartesian(ylim = c(-0.4, 0.4), clip = "on") +
+  labs(x = "Part", y = "Functional Connectivity (FC)") +
+  ggtitle("mean FC") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r10.p1.all.plot1
+```
+
+<br>
+
+통계 분석 결과는 아래와 같다.
+
+<br>
+
+```{r, echo = T}
+r10_allL.1.tmp <- r10_allL
+
+r10.aov1.tmp <- aov_ez(id="sn", dv="r", data = r10_allL.1.tmp, within = c("net","part"))
+# summary(r10.aov1)
+nice(r10.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r10_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(net, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r10_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(net, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net", "group1", "group2")) %>% kable(digits=3)
+
+p_h1 <- r10_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::pairwise_t_test(r ~ net, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(part, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r10_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::cohens_d(r ~ net, paired=T, ci = F) %>% 
+  dplyr::select(part, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("part", "group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+### Negative Connectivity by Net & Part
+
+<Br>
+
+Negative FC에 대한 분석을 수행한다. 
+
+
+<br>
+
+```{r, collapse=TRUE}
+
+# subject-level, long format
+r10_allL <- r10_2 %>% group_by(sn, net, part) %>%
+  dplyr::summarise(r=mean(n_fc)) %>%
+  ungroup()
+
+# summary table: grand mean
+r10_allG <- r10_allL %>% group_by(net, part) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+
+r10_allG$r.se <- Rmisc::summarySEwithin(data = r10_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("net","part"))$se
+r10_allG$r.ci <- Rmisc::summarySEwithin(data = r10_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("net","part"))$ci
+r10_allG <- r10_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r10_allG %>% dplyr::select(net, part, r.m) %>%
+  spread(key=part, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r10_allL.p1 <- r10_allL
+r10_allG.p1 <- r10_allG
+
+r10.p1.all.plot1 <- ggplot(data=r10_allL.p1, aes(x=part, y=r, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  facet_grid(.~net, scales="free_x", space = "free") +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  geom_point(data=r10_allL.p1, aes(x=part, y=r, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r10_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  # scale_x_discrete(labels=c("Within", "Between")) +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +  scale_color_brewer(palette="Set2") + 
+  # coord_cartesian(ylim = c(-0.4, 0.4), clip = "on") +
+  labs(x = "Part", y = "Functional Connectivity (FC)") +
+  ggtitle("mean FC") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r10.p1.all.plot1
+```
+
+<br>
+
+통계 분석 결과는 아래와 같다. 
+
+<br>
+
+```{r, echo = T}
+r10_allL.1.tmp <- r10_allL
+
+r10.aov1.tmp <- aov_ez(id="sn", dv="r", data = r10_allL.1.tmp, within = c("net","part"))
+# summary(r10.aov1)
+nice(r10.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r10_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(net, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r10_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(net, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net", "group1", "group2")) %>% kable(digits=3)
+
+p_h1 <- r10_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::pairwise_t_test(r ~ net, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(part, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r10_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::cohens_d(r ~ net, paired=T, ci = F) %>% 
+  dplyr::select(part, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("part", "group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+***
+
+<br>
+
+
+## Network Measures Analysis
+
+<Br>
+
+보조적인 분석으로 Connectivity Matrix에 대한 Network 분석을 수행한다. 네트워크 분석은 복잡한 연결 구조를 Node(ROI), Edge 또는 Link(ROI 간 Fuunctional Connectivity)의 개념을 통해 정의하고, 이 들간의 집중도, 분산도, 강도 등을 분석하여 전체 네트워크 구조에 대한 특징을 확인한다. 여기서는 전체 brain connectivity의 Global Network Measure로 Modularity와 Global Efficiency를 분석하였다. 
+
+<br>
+
+Modularity는 전체 Network의 연결 구조가 얼마나 잘 Community Structure로 구분되는지를 Louvain의 알고리즘을 통해 계산한다. 쉽게 말해서, 전체 네트워크가 개별 Community Structure로 분할되는 정도를 나타내는 것으로 네트워크가 기능적으로 Segregation이 되는지를 나타낸다.
+
+<br>
+
+Global Efficiency는 떨어져있는 노드 간의 연결 효율성을 나타내는 Path Length의 역술 계산되며, 전체 네트워크의 정보 전달 수용력을 반영한다. 높은 Global efficiency는 전체 네트워크에 속해있는 떨어져있논 노드들이 서로 효율적으로 정보 전달을 한다는 것(높은 연결성 정도)을 나타내는 것으로 네트워크 간의 통합을 나타낸다고 할 수 있다. 
+
+<br>
+
+아래에서는 Modularity와 Global Efficiency가 구획 간 차이가 있는지를 살펴본다. 
+
+<br>
+
+```{r, collapse=TRUE}
+
+## FC
+r11 <- read.csv("py_output/sFC_net_v2.csv", header = T)
+r11_l <- r11 %>% dplyr::filter(sn %in% targ_sn)
+r11_l$sn = factor(r11_l$sn)
+r11_l$net = factor(r11_l$net,
+                   levels = c('All', 'Vis', 'SM', 'FPN',
+                                'VAN', 'DAN', 'DMN', 'Limb', 'SubCor','TP'),
+                     labels = c('All', 'Vis', 'SM', 'FPN',
+                                'VAN', 'DAN', 'DMN', 'Limb', 'SubCor','TP'))
+r11_l$idx = factor(r11_l$idx)
+r11_l$part = factor(r11_l$part, 
+                    levels = c(1,2),
+                    labels = c('p1','p2'))
+
+
+## Behavior
+r11_behav <- read.csv("data/aniFCnet_behav.csv", header = T)
+glimpse(r11_behav, width = 80)
+r11_behav <- r11_behav %>% dplyr::filter(sn %in% targ_sn)
+r11_behav$sn = factor(r11_behav$sn)
+r11_behav$idx = factor(r11_behav$stimIdx)
+r11_behav$corr = r11_behav$correctness
+r11_behav <- r11_behav %>% dplyr::select(sn, idx, corr, scores, check)
+
+r11_1 <- merge(r11_l, r11_behav, by = c("sn", "idx"))
+r11_2 <- r11_1
+#r11_2 <- r11_1 %>% filter(corr == 1, check != 1)
+```
+
+<br>
+
+### Modularity
+
+<br>
+
+Modularity에 대한 요약과 통계 분석을 수행한다.
+
+<br>
+
+```{r, collapse=TRUE}
+
+# subject-level, long format
+r11_allL <- r11_2 %>% dplyr::filter(net == "All") %>% 
+  group_by(sn, part) %>%
+  dplyr::summarise(r=mean(md1)) %>%
+  ungroup()
+
+# summary table: grand mean
+r11_allG <- r11_allL %>% group_by( part) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+
+r11_allG$r.se <- Rmisc::summarySEwithin(data = r11_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("part"))$se
+r11_allG$r.ci <- Rmisc::summarySEwithin(data = r11_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("part"))$ci
+r11_allG <- r11_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r11_allG %>% dplyr::select(part, r.m) %>%
+  spread(key=part, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r11_allL.p1 <- r11_allL
+r11_allG.p1 <- r11_allG
+
+r11.p1.all.plot1 <- ggplot(data=r11_allL.p1, aes(x=part, y=r, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  # facet_grid(.~net, scales="free_x", space = "free") +
+  # geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  geom_point(data=r11_allL.p1, aes(x=part, y=r, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r11_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  # scale_x_discrete(labels=c("Within", "Between")) +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +  scale_color_brewer(palette="Set2") + 
+  coord_cartesian(ylim = c(0.35, 0.6), clip = "on") +
+  labs(x = "Part", y = "Modularity Score") +
+  ggtitle("Modularity") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r11.p1.all.plot1
+```
+
+<br>
+
+Modularity 통계 분석 결과는 아래와 같다.
+
+<br>
+
+```{r, echo = T}
+r11_allL.1.tmp <- r11_allL
+
+r11.aov1.tmp <- aov_ez(id="sn", dv="r", data = r11_allL.1.tmp, within = c("part"))
+# summary(r11.aov1)
+nice(r11.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r11_allL.1.tmp %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r11_allL.1.tmp %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("group1", "group2")) %>% kable(digits=3)
+
+
+```
+
+<br>
+
+### Global Efficiency
+
+<br>
+
+Global Efficiency에 대한 요약과 통계 분석을 수행한다.
+
+<br>
+
+```{r, collapse=TRUE}
+
+# subject-level, long format
+r11_allL <- r11_2 %>% dplyr::filter(net == "All") %>% 
+  group_by(sn, part) %>%
+  dplyr::summarise(r=mean(ge)) %>%
+  ungroup()
+
+# summary table: grand mean
+r11_allG <- r11_allL %>% group_by( part) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+
+r11_allG$r.se <- Rmisc::summarySEwithin(data = r11_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("part"))$se
+r11_allG$r.ci <- Rmisc::summarySEwithin(data = r11_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("part"))$ci
+r11_allG <- r11_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r11_allG %>% dplyr::select(part, r.m) %>%
+  spread(key=part, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r11_allL.p1 <- r11_allL
+r11_allG.p1 <- r11_allG
+
+r11.p1.all.plot1 <- ggplot(data=r11_allL.p1, aes(x=part, y=r, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  # facet_grid(.~net, scales="free_x", space = "free") +
+  # geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  geom_point(data=r11_allL.p1, aes(x=part, y=r, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r11_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  # scale_x_discrete(labels=c("Within", "Between")) +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +  scale_color_brewer(palette="Set2") + 
+  coord_cartesian(ylim = c(0.2, 0.3), clip = "on") +
+  labs(x = "Part", y = "Global Efficiency") +
+  ggtitle("Global Efficiency") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r11.p1.all.plot1
+```
+
+<br>
+
+Global Efficiency의 통계 분석 결과는 아래와 같다.
+
+<br>
+
+```{r, echo = T}
+r11_allL.1.tmp <- r11_allL
+
+r11.aov1.tmp <- aov_ez(id="sn", dv="r", data = r11_allL.1.tmp, within = c("part"))
+# summary(r11.aov1)
+nice(r11.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r11_allL.1.tmp %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r11_allL.1.tmp %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("group1", "group2")) %>% kable(digits=3)
+
+
+```
+
+<br>
+
+### Participation Coefficient
+
+<br>
+
+Participation Coefficiecny
+
+<br>
+
+```{r, collapse=TRUE}
+
+# subject-level, long format
+r11_allL <- r11_2 %>% 
+  dplyr::filter(net !="All") %>% 
+  group_by(sn, net, part) %>%
+  dplyr::summarise(r=mean(p_pc)) %>%
+  ungroup()
+
+# summary table: grand mean
+r11_allG <- r11_allL %>% group_by(net, part) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+
+r11_allG$r.se <- Rmisc::summarySEwithin(data = r11_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("net","part"))$se
+r11_allG$r.ci <- Rmisc::summarySEwithin(data = r11_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("net","part"))$ci
+r11_allG <- r11_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r11_allG %>% dplyr::select(net, part, r.m) %>%
+  spread(key=part, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r11_allL.p1 <- r11_allL
+r11_allG.p1 <- r11_allG
+
+r11.p1.all.plot1 <- ggplot(data=r11_allL.p1, aes(x=part, y=r, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  facet_grid(.~net, scales="free_x", space = "free") +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  geom_point(data=r11_allL.p1, aes(x=part, y=r, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r11_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  # scale_x_discrete(labels=c("Within", "Between")) +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +  scale_color_brewer(palette="Set2") + 
+  # coord_cartesian(ylim = c(-0.4, 0.4), clip = "on") +
+  labs(x = "Part", y = "Participation Coefficient") +
+  ggtitle("Participation Coefficient") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r11.p1.all.plot1
+```
+
+<br>
+
+Participation Coefficient 통계 분석 결과
+
+<br>
+
+```{r, echo = T}
+r11_allL.1.tmp <- r11_allL
+
+r11.aov1.tmp <- aov_ez(id="sn", dv="r", data = r11_allL.1.tmp, within = c("net","part"))
+# summary(r11.aov1)
+nice(r11.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r11_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(net, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r11_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(net, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net", "group1", "group2")) %>% kable(digits=3)
+
+p_h1 <- r11_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::pairwise_t_test(r ~ net, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(part, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r11_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::cohens_d(r ~ net, paired=T, ci = F) %>% 
+  dplyr::select(part, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("part", "group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+### Local Efficiecny
+
+<br>
+
+Local Efficiency, 노드 별 Effciecny
+
+<br>
+
+```{r, collapse=TRUE}
+
+# subject-level, long format
+r11_allL <- r11_2 %>% 
+  dplyr::filter(net !="All") %>% 
+  group_by(sn, net, part) %>%
+  dplyr::summarise(r=mean(le)) %>%
+  ungroup()
+
+# summary table: grand mean
+r11_allG <- r11_allL %>% group_by(net, part) %>%
+  dplyr::summarise(r.m = mean(r), r.sd = sd(r)) %>%
+  ungroup()
+
+r11_allG$r.se <- Rmisc::summarySEwithin(data = r11_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("net","part"))$se
+r11_allG$r.ci <- Rmisc::summarySEwithin(data = r11_allL, measurevar = "r", 
+                                        idvar = "sn", withinvars = c("net","part"))$ci
+r11_allG <- r11_allG %>% 
+  mutate(lower.ci = r.m-r.ci,
+         upper.ci = r.m+r.ci,
+         lower.se = r.m-r.se,
+         upper.se = r.m+r.se)
+
+r11_allG %>% dplyr::select(net, part, r.m) %>%
+  spread(key=part, value=r.m) %>% kable(digits=2)
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r11_allL.p1 <- r11_allL
+r11_allG.p1 <- r11_allG
+
+r11.p1.all.plot1 <- ggplot(data=r11_allL.p1, aes(x=part, y=r, fill=part, shpae=part)) +
+  stat_summary(fun = mean, geom = "bar", position="dodge", 
+               na.rm = TRUE, alpha = .9, width = 0.8,  color="black", size = 0.15) +
+  facet_grid(.~net, scales="free_x", space = "free") +
+  geom_hline(yintercept=0, linetype='solid', color='black', alpha =1, size=1) +
+  geom_point(data=r11_allL.p1, aes(x=part, y=r, fill=part), position = position_dodge(width=0.8),
+             size=2, show.legend=F, color="gray90") +
+  geom_errorbar(data=r11_allG.p1, aes(x=part, y= r.m, ymin=r.m-r.ci, ymax=r.m+r.ci), width=.2,
+                position=position_dodge(.8), color = "black") +
+  # scale_x_discrete(labels=c("Within", "Between")) +
+  scale_fill_manual(values = c("#ED7D31", "#5B9BD5"), # c("#ED7D31", "#5B9BD5", "#70AD47"),
+                    labels = c("First Half", "Second Half")) +  scale_color_brewer(palette="Set2") + 
+  # coord_cartesian(ylim = c(-0.4, 0.4), clip = "on") +
+  labs(x = "Part", y = "Local Efficiency") +
+  ggtitle("Local Efficiency") +
+  theme_bw(base_size = 18) +
+  theme(#axis.text.x=element_blank(),
+    #axis.ticks.x=element_blank(),
+    axis.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+    axis.line=element_line(),
+    strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+    strip.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing=unit(1, "lines"),
+    plot.margin = margin(1, 0.3, 1, 0.3, "cm"), 
+    legend.title = element_blank(),
+    legend.position="bottom")
+# ggsave("fig1_1.fmri.jpg", plot = r3.p1.all.plot1, width=6, height=6, unit='in', dpi=600)
+r11.p1.all.plot1
+```
+
+<br>
+
+Local Efficiency 통계 분석 결과
+
+<br>
+
+```{r, echo = T}
+r11_allL.1.tmp <- r11_allL
+
+r11.aov1.tmp <- aov_ez(id="sn", dv="r", data = r11_allL.1.tmp, within = c("net","part"))
+# summary(r11.aov1)
+nice(r11.aov1.tmp, es="pes") %>% kable(digits=2)
+
+p_h1 <- r11_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::pairwise_t_test(r ~ part, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(net, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r11_allL.1.tmp %>% group_by(net) %>% 
+  rstatix::cohens_d(r ~ part, paired=T, ci = F) %>% 
+  dplyr::select(net, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("net", "group1", "group2")) %>% kable(digits=3)
+
+p_h1 <- r11_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::pairwise_t_test(r ~ net, 
+                           p.adjust.method="holm", 
+                           paired=T, detailed=T) %>% 
+  dplyr::select(part, group1, group2, estimate, conf.low, conf.high, df, statistic, p.adj, p.adj.signif) 
+p_h2 <- r11_allL.1.tmp %>% group_by(part) %>% 
+  rstatix::cohens_d(r ~ net, paired=T, ci = F) %>% 
+  dplyr::select(part, group1, group2, effsize, magnitude)
+merge(p_h1, p_h2, by=c("part", "group1", "group2")) %>% kable(digits=3)
+```
+
+<br>
+
+### Correlation Analysis
+
+<br>
+
+Modularity, Efficiency가 영상에 대한 이해도와 관련성이 있는지 확인한다. 
+
+<br>
+
+#### Part 1 - Efficiency & Comprehension
+
+<br>
+
+```{r, collapse=TRUE, echo = T}
+r11_5 <- r11_2 %>% filter(check != 1) #corr == 1,
+r11_6 <- r11_5 %>% filter(part == "p1", net == "All") %>% dplyr::select(sn, net,idx, part, ge, md1, scores, corr)
+r11_6.L <- r11_6 %>% group_by(sn) %>% 
+  dplyr::summarise(ge.m = mean(ge), m.m = mean(md1), scores.m = mean(scores)) %>% 
+  ungroup()
+
+cor.z <- cor.test(formula = ~ ge.m + scores.m, data = r11_6.L,
+                  method = "pearson", alternative = "two.sided", exact=FALSE) # exact=FALSE
+cor.z
+
+# cor.z <- cor.test(formula = ~ md1 + scores, data = r11_6,
+                  # method = "pearson", alternative = "two.sided", exact=FALSE) # exact=FALSE
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r11.corr.ge <-ggplot(r11_6.L, aes(x=ge.m, y=scores.m)) +
+  geom_point(size = 4) +
+  geom_smooth(method=lm) +
+  labs(x = sprintf("Global Efficiency"),
+       y = sprintf("Comprehension Scores"))+
+  ggtitle("Part 1 - Global Efficiency") +
+  # coord_cartesian(xlim = c(-3,3), ylim = c(-3,4)) + 
+  theme_bw(base_size = 15) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        legend.position = c(0.65, 0.85),
+        legend.title = element_blank(),
+        aspect.ratio = 1,
+        legend.background = element_blank(),
+        plot.margin = margin(1, 0.5, 0.5, 0.7, "cm"),
+        legend.key = element_blank())
+r11.corr.ge
+```
+
+
+#### Part 2 - Efficiency & Comprehension
+
+<br>
+
+```{r, collapse=TRUE, echo = T}
+r11_5 <- r11_2 %>% filter(check != 1) #corr == 1,
+r11_6 <- r11_5 %>% filter(part == "p2", net == "All") %>% dplyr::select(sn, net,idx, part, ge, md1, scores, corr)
+r11_6.L <- r11_6 %>% group_by(sn) %>% 
+  dplyr::summarise(ge.m = mean(ge), m.m = mean(md1), scores.m = mean(scores)) %>% 
+  ungroup()
+r11_6.L <- r11_6.L %>% filter(sn != 16)
+cor.z <- cor.test(formula = ~ ge.m + scores.m, data = r11_6.L,
+                  method = "pearson", alternative = "two.sided", exact=FALSE) # exact=FALSE
+cor.z
+
+# cor.z <- cor.test(formula = ~ md1 + scores, data = r11_6,
+                  # method = "pearson", alternative = "two.sided", exact=FALSE) # exact=FALSE
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r11.corr.ge <-ggplot(r11_6.L, aes(x=ge.m, y=scores.m)) +
+  geom_point(size = 4) +
+  geom_smooth(method=lm) +
+  labs(x = sprintf("Global Efficiency"),
+       y = sprintf("Comprehension Scores"))+
+  ggtitle("Part 2 - Global Efficiency") +
+  # coord_cartesian(xlim = c(-3,3), ylim = c(-3,4)) + 
+  theme_bw(base_size = 15) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        legend.position = c(0.65, 0.85),
+        legend.title = element_blank(),
+        aspect.ratio = 1,
+        legend.background = element_blank(),
+        plot.margin = margin(1, 0.5, 0.5, 0.7, "cm"),
+        legend.key = element_blank())
+r11.corr.ge
+```
+
+
+
+#### Part 1 - Modularity & Comprehension
+
+<br>
+
+```{r, collapse=TRUE, echo = T}
+r11_5 <- r11_2 %>% filter(check != 1) #corr == 1,
+r11_6 <- r11_5 %>% filter(part == "p1", net == "All") %>% dplyr::select(sn, net,idx, part, ge, md1, scores, corr)
+r11_6.L <- r11_6 %>% group_by(sn) %>% 
+  dplyr::summarise(ge.m = mean(ge), m.m = mean(md1), scores.m = mean(scores)) %>% 
+  ungroup()
+
+cor.z <- cor.test(formula = ~ m.m + scores.m, data = r11_6.L,
+                  method = "pearson", alternative = "two.sided", exact=FALSE) # exact=FALSE
+cor.z
+
+# cor.z <- cor.test(formula = ~ md1 + scores, data = r11_6,
+                  # method = "pearson", alternative = "two.sided", exact=FALSE) # exact=FALSE
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r11.corr.m <-ggplot(r11_6.L, aes(x=m.m, y=scores.m)) +
+  geom_point(size = 4) +
+  geom_smooth(method=lm) +
+  labs(x = sprintf("Modularity"),
+       y = sprintf("Comprehension Scores"))+
+  ggtitle("Part 1 - Modularity") +
+  # coord_cartesian(xlim = c(-3,3), ylim = c(-3,4)) + 
+  theme_bw(base_size = 15) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        legend.position = c(0.65, 0.85),
+        legend.title = element_blank(),
+        aspect.ratio = 1,
+        legend.background = element_blank(),
+        plot.margin = margin(1, 0.5, 0.5, 0.7, "cm"),
+        legend.key = element_blank())
+r11.corr.m
+```
+
+<br>
+
+#### Part 2 - Modularity & Comprehension
+
+<br>
+
+```{r, collapse=TRUE, echo = T}
+r11_5 <- r11_2 %>% filter(check != 1) #corr == 1,
+r11_6 <- r11_5 %>% filter(part == "p2", net == "All") %>% dplyr::select(sn, net,idx, part, ge, md1, scores, corr)
+r11_6.L <- r11_6 %>% group_by(sn) %>% 
+  dplyr::summarise(ge.m = mean(ge), m.m = mean(md1), scores.m = mean(scores)) %>% 
+  ungroup()
+
+cor.z <- cor.test(formula = ~ m.m + scores.m, data = r11_6.L,
+                  method = "pearson", alternative = "two.sided", exact=FALSE) # exact=FALSE
+cor.z
+
+```
+
+<br>
+
+```{r, fig.width= 14, fig.height=10}
+r11.corr.m <-ggplot(r11_6.L, aes(x=m.m, y=scores.m)) +
+  geom_point(size = 4) +
+  geom_smooth(method=lm) +
+  labs(x = sprintf("Modularity"),
+       y = sprintf("Comprehension Scores"))+
+  ggtitle("Part 2 - Modularity") +
+  # coord_cartesian(xlim = c(-3,3), ylim = c(-3,4)) + 
+  theme_bw(base_size = 15) +
+  theme(axis.title = element_text(face = "bold", size = 16, color = "black"),
+        axis.text = element_text(face = "plain", hjust = 0.5, size = 15, color = "black"),
+        axis.line=element_line(),
+        strip.text.x = element_text(face = "plain", size = 15, color = "black"),
+        strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing=unit(1, "lines"),
+        legend.position = c(0.65, 0.85),
+        legend.title = element_blank(),
+        aspect.ratio = 1,
+        legend.background = element_blank(),
+        plot.margin = margin(1, 0.5, 0.5, 0.7, "cm"),
+        legend.key = element_blank())
+r11.corr.m
+```
+
+<br>
+
+# Session Info
+
+<br>
+
+```{r, collapse=TRUE}
+sessionInfo()
+```

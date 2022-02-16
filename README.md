@@ -13,7 +13,7 @@
 - Deep Memory Lab, Cognitive Science Research Group, Korea Brain Research Institute
 
 ## About
-- 이 Repository는 KBRI, 인지과학 연구그룹, 심층기억연구실에서 2021.10 – 2022.02에 수행한 행동 및 fMRI 인지 실험의 데이터 분석 작업물을 담고 있습니다.
+- 이 Repository는 행동 및 fMRI 인지 실험의 데이터 분석 작업물을 담고 있습니다.
 - 실험 프로그램와 fMRI 영상 데이터 전처리 등을 위한 코드, 개별 참가자의 원본 데이터는 포함되어 있지 않습니다. 
 - 분석은 R과 R studio, Python, jupyter notebook를 통해 수행되었으며, 분석 코드 및 결과는 **aniFCnet_results.html** 를 다운로드받아서 확인하실 수 있습니다. 
 - 다른 파일에 대한 정보는 아래 **FILES**를 확인해주세요.
